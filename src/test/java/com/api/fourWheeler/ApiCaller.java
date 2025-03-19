@@ -1,4 +1,4 @@
-package com.api.products.fourWheeler;
+package com.api.fourWheeler;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.*;

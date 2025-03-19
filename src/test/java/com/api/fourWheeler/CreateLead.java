@@ -1,9 +1,10 @@
-package com.api.products.fourWheeler;
+package com.api.fourWheeler;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.*;
 import org.springframework.web.client.RestTemplate;
+
 import java.io.File;
 import java.io.IOException;
 import java.net.URLDecoder;
