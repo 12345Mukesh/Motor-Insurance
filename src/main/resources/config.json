@@ -1,0 +1,11 @@
+{
+  "baseUrl": "https://pos-api-stg.gromoinsure.in",
+  "mvBaseUrl": "https://mv-stg.gromoinsure.in",
+  "sendOtpEndpoint": "/v1/auth/sendOTP",
+  "loginEndpoint": "/v1/pos/login",
+  "phone": "9872532221",
+  "otp": 2222,
+  "communicationConsent": true,
+  "leadCreateEndpoint": "/api/v1/insurance/lead/create",
+  "pageData" : "/api/v1/insurance/refresh-journey/page-data"
+}
