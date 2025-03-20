@@ -14,8 +14,16 @@ public class ApiCaller {
     private static final String CONFIG_FILE = "src/main/resources/config.json";
 
     // ✅ Store session token as a static variable
-    public static String sessionToken;
+    private static String sessionToken;  // Private static variable
 
+    public static void setSessionToken(String token) {
+        sessionToken = token;
+        System.out.println("🔑 Session Token Set: " + sessionToken);
+    }
+
+    public static String getSessionToken() {
+        return sessionToken;
+    }
     public static void main(String[] args) {
         try {
             System.out.println("🔄 Requesting OTP Token...");

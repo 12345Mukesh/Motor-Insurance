@@ -16,23 +16,25 @@ import java.util.Random;
 public class CreateLead {
     private static final RestTemplate restTemplate = new RestTemplate();
     private static final String CONFIG_FILE = "src/main/resources/config.json";
+    private static String sessionToken = null;  // Store the session token globally
 
     public static void main(String[] args) {
         try {
-            // Ensure session token is available
-            if (ApiCaller.sessionToken == null || ApiCaller.sessionToken.isEmpty()) {
-                System.out.println("🔄 No session token found. Logging in...");
-                ApiCaller.main(null); // Calls ApiCaller to fetch sessionToken
+            sessionToken = getSessionToken();
+            if (sessionToken == null) {
+                System.err.println("❌ Failed to retrieve a valid session token!");
+                return;
             }
 
-            // Decode session token if necessary
-            String authToken = URLDecoder.decode(ApiCaller.sessionToken, StandardCharsets.UTF_8);
-            System.out.println("🔑 Decoded Session Token: " + authToken);
-
-            // Create leads and update vehicle details
-            createLead(authToken, "comprehensive");
-            createLead(authToken, "tp");
-            createLead(authToken, "saod");
+            boolean allLeadsCreated = true;
+            for (String policyType : new String[]{"comprehensive", "tp", "saod"}) {
+                String leadId = createLead(sessionToken, policyType);
+                if (leadId != null) {
+                    pageDataForVehicleDetails(sessionToken, leadId);
+                } else {
+                    allLeadsCreated = false;
+                }
+            }
 
         } catch (Exception e) {
             System.err.println("❌ Error: " + e.getMessage());
@@ -40,48 +42,34 @@ public class CreateLead {
         }
     }
 
-    /**
-     * Generates a vehicle registration number based on policy type.
-     */
-    private static String generateRegistrationNumber(String policyType) {
-        Random random = new Random();
-        int randomNumber = random.nextInt(9000) + 1000; // Generate 4-digit number
-        String letters = "" + (char) (random.nextInt(26) + 'A') + (char) (random.nextInt(26) + 'A'); // Random letters
+    public static String getSessionTokenStatic() {
+        return sessionToken;  // Allow other classes to access the session token
+    }
 
-        String stateCode;
-        switch (policyType) {
-            case "comprehensive":
-                stateCode = "DL1";
-                break;
-            case "tp":
-                stateCode = "MH01";
-                break;
-            case "saod":
-                stateCode = "PB10";
-                break;
-            default:
-                throw new IllegalArgumentException("❌ Invalid policy type: " + policyType);
+    private static String getSessionToken() throws IOException {
+        if (sessionToken != null && !sessionToken.isEmpty()) {
+            return sessionToken;  // Return cached token if available
         }
-        return stateCode + letters + randomNumber;
+
+        if (ApiCaller.getSessionToken() == null || ApiCaller.getSessionToken().isEmpty()) {
+            System.out.println("🔄 No session token found. Logging in...");
+            ApiCaller.main(null);
+        }
+        String token = ApiCaller.getSessionToken();
+        if (token != null) {
+            sessionToken = URLDecoder.decode(token, StandardCharsets.UTF_8);
+            ApiCaller.setSessionToken(sessionToken);
+            System.out.println("✅ Stored Session Token: " + sessionToken);
+            return sessionToken;
+        }
+        return null;
     }
 
-    /**
-     * Reads a value from `config.json`.
-     */
-    private static String getConfigValue(String key) throws IOException {
-        ObjectMapper objectMapper = new ObjectMapper();
-        Map<String, Object> config = objectMapper.readValue(new File(CONFIG_FILE), Map.class);
-        return config.containsKey(key) ? config.get(key).toString() : null;
-    }
-
-    /**
-     * Creates a lead and updates vehicle details.
-     */
-    private static void createLead(String authToken, String policyType) throws IOException {
+    private static String createLead(String authToken, String policyType) throws IOException {
         String url = getConfigValue("mvBaseUrl") + getConfigValue("leadCreateEndpoint");
+        System.out.println("📌 Create Lead API URL: " + url);
 
         String registrationNumber = generateRegistrationNumber(policyType);
-        System.out.println("🚗 Generated Registration Number for " + policyType.toUpperCase() + ": " + registrationNumber);
 
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("registrationNumber", registrationNumber);
@@ -89,115 +77,77 @@ public class CreateLead {
         requestBody.put("businessType", "car");
         requestBody.put("insurancePolicySubType", "rollover");
 
-        ObjectMapper objectMapper = new ObjectMapper();
-        String jsonRequestBody = objectMapper.writeValueAsString(requestBody);
-        System.out.println("📤 Request Body (" + policyType.toUpperCase() + "): " + jsonRequestBody);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("authorizationtoken", authToken);
-
-        HttpEntity<String> requestEntity = new HttpEntity<>(jsonRequestBody, headers);
-        ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, requestEntity, String.class);
-
-        String leadId = validateLeadResponse(response, policyType, registrationNumber);
-
-        if (leadId != null) {
-            updateVehicleDetails(authToken, leadId, policyType);
-        } else {
-            System.err.println("❌ Skipping vehicle details update: Lead ID is null for " + policyType.toUpperCase());
-        }
+        return sendPostRequest(url, requestBody, authToken, "Lead");
     }
 
-    /**
-     * Validates the API response and returns `leadId`.
-     */
-    private static String validateLeadResponse(ResponseEntity<String> response, String policyType, String registrationNumber) throws IOException {
-        if (response.getStatusCode() == HttpStatus.OK) {
-            ObjectMapper objectMapper = new ObjectMapper();
-            JsonNode responseBody = objectMapper.readTree(response.getBody());
-
-            if (responseBody.has("success") && responseBody.get("success").asBoolean()) {
-                JsonNode data = responseBody.get("data");
-
-                if (data != null && data.has("leadId") && data.has("insuranceLeadId") && data.has("registrationNumber")) {
-                    System.out.println("✅ Lead Created Successfully for " + policyType.toUpperCase() + ":");
-                    System.out.println(responseBody.toPrettyString());
-
-                    if (!data.get("registrationNumber").asText().equals(registrationNumber)) {
-                        System.err.println("⚠️ Warning: Mismatch in registration number!");
-                    }
-
-                    return data.get("leadId").asText(); // Return leadId for updating vehicle details
-                } else {
-                    System.err.println("❌ Invalid Response Structure: Missing required fields.");
-                }
-            } else {
-                System.err.println("❌ API Response indicates failure: " + response.getBody());
-            }
-        } else {
-            System.err.println("❌ Failed to create lead for " + policyType.toUpperCase() +
-                    ". HTTP Status: " + response.getStatusCode() + ", Response: " + response.getBody());
-        }
-        return null;
-    }
-
-    /**
-     * Sends a POST request to update vehicle details using the leadId.
-     */
-    private static void updateVehicleDetails(String authToken, String leadId, String policyType) throws IOException {
-        if (leadId == null) {
-            System.err.println("❌ Cannot update vehicle details: leadId is null for " + policyType.toUpperCase());
-            return;
-        }
-
+    private static void pageDataForVehicleDetails(String authToken, String leadId) throws IOException {
         String url = getConfigValue("mvBaseUrl") + getConfigValue("pageData");
+        System.out.println("📌 Page Data API URL: " + url);
 
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("leadId", leadId);
         requestBody.put("pageType", "prequote-vehicle-detail");
 
+        sendPostRequest(url, requestBody, authToken, "Page Data");
+    }
+
+    private static String getConfigValue(String key) throws IOException {
         ObjectMapper objectMapper = new ObjectMapper();
-        String jsonRequestBody = objectMapper.writeValueAsString(requestBody);
-        System.out.println("📤 Updating Vehicle Details (" + policyType.toUpperCase() + "): " + jsonRequestBody);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("authorizationtoken", authToken);
-
-        HttpEntity<String> requestEntity = new HttpEntity<>(jsonRequestBody, headers);
-        ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, requestEntity, String.class);
-
-        if (response.getStatusCode() == HttpStatus.OK) {
-            System.out.println("✅ Vehicle Details Updated Successfully for " + policyType.toUpperCase() + ":\n" + response.getBody());
-        } else {
-            System.err.println("❌ Failed to update vehicle details for " + policyType.toUpperCase() +
-                    ". HTTP Status: " + response.getStatusCode() + ", Response: " + response.getBody());
-        }
+        Map<String, Object> config = objectMapper.readValue(new File(CONFIG_FILE), Map.class);
+        return config.containsKey(key) ? config.get(key).toString() : null;
     }
-    private static void matchVehicleUpdateResponse(ResponseEntity<String> response, String policyType) {
-        try {
-            ObjectMapper objectMapper = new ObjectMapper();
-            JsonNode responseBody = objectMapper.readTree(response.getBody());
 
-            if (!responseBody.has("success") || !responseBody.get("success").asBoolean()) {
-                System.err.println("❌ Vehicle update failed for " + policyType.toUpperCase() + ": " + response.getBody());
-                return;
+    private static String sendPostRequest(String url, Map<String, Object> requestBody, String authToken, String requestType) {
+        int retryCount = 0;
+        while (retryCount < 2) {
+            try {
+                HttpHeaders headers = new HttpHeaders();
+                headers.setContentType(MediaType.APPLICATION_JSON);
+                headers.set("authorizationtoken", authToken);
+
+                HttpEntity<String> requestEntity = new HttpEntity<>(new ObjectMapper().writeValueAsString(requestBody), headers);
+                ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, requestEntity, String.class);
+
+                System.out.println("🔍 " + requestType + " Response Status: " + response.getStatusCodeValue());
+                System.out.println("🔍 Raw Response: " + response.getBody());
+
+                if (response.getStatusCode() == HttpStatus.OK) {
+                    JsonNode responseBody = new ObjectMapper().readTree(response.getBody());
+                    if (requestType.equals("Lead") && responseBody.has("success") && responseBody.get("success").asBoolean()) {
+                        JsonNode data = responseBody.get("data");
+                        if (data != null && data.has("leadId")) {
+                            return data.get("leadId").asText();
+                        }
+                    }
+                } else if (response.getStatusCode() == HttpStatus.UNAUTHORIZED) {
+                    System.out.println("⚠️ Unauthorized (401) - Refreshing token...");
+                    sessionToken = getSessionToken();
+                    retryCount++;
+                    continue;
+                }
+
+                return null;
+            } catch (Exception e) {
+                System.err.println("❌ Error in " + requestType + " request: " + e.getMessage());
+                e.printStackTrace();
+                return null;
             }
-
-            System.out.println("✅ Vehicle Details Updated Successfully for " + policyType.toUpperCase());
-            System.out.println(responseBody.toPrettyString());
-
-        } catch (IOException e) {
-            System.err.println("❌ Error parsing response: " + e.getMessage());
-            e.printStackTrace();
         }
+        return null;
     }
 
+    private static String generateRegistrationNumber(String policyType) {
+        Random random = new Random();
+        int randomNumber = random.nextInt(9000) + 1000;
+        String letters = "" + (char) (random.nextInt(26) + 'A') + (char) (random.nextInt(26) + 'A');
 
-
-
-
-
-
+        String stateCode;
+        switch (policyType) {
+            case "comprehensive": stateCode = "DL1"; break;
+            case "tp": stateCode = "MH01"; break;
+            case "saod": stateCode = "PB10"; break;
+            default: throw new IllegalArgumentException("❌ Invalid policy type: " + policyType);
+        }
+        return stateCode + letters + randomNumber;
+    }
 }

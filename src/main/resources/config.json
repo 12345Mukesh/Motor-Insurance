@@ -7,5 +7,8 @@
   "otp": 2222,
   "communicationConsent": true,
   "leadCreateEndpoint": "/api/v1/insurance/lead/create",
-  "pageData" : "/api/v1/insurance/refresh-journey/page-data"
+  "pageData" : "/api/v1/insurance/refresh-journey/page-data",
+  "make": "/api/v1/make",
+  "model": "/api/v1/model",
+  "variant": "/api/v1/variant"
 }
