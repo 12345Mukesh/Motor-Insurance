@@ -16,7 +16,12 @@ import java.util.Random;
 public class CreateLead {
     private static final RestTemplate restTemplate = new RestTemplate();
     private static final String CONFIG_FILE = "src/main/resources/config.json";
-    private static String sessionToken = null;  // Store the session token globally
+    private static String sessionToken = null;
+
+    // Store lead IDs as static variables
+    private static String comprehensiveLead;
+    private static String tpLead;
+    private static String saodLead;
 
     public static void main(String[] args) {
         try {
@@ -26,15 +31,31 @@ public class CreateLead {
                 return;
             }
 
-            boolean allLeadsCreated = true;
             for (String policyType : new String[]{"comprehensive", "tp", "saod"}) {
                 String leadId = createLead(sessionToken, policyType);
                 if (leadId != null) {
                     pageDataForVehicleDetails(sessionToken, leadId);
-                } else {
-                    allLeadsCreated = false;
+
+                    // Store lead in corresponding variable
+                    switch (policyType) {
+                        case "comprehensive":
+                            comprehensiveLead = leadId;
+                            break;
+                        case "tp":
+                            tpLead = leadId;
+                            break;
+                        case "saod":
+                            saodLead = leadId;
+                            break;
+                    }
                 }
             }
+
+            // Print lead IDs for verification
+            System.out.println("\n✅ Lead IDs Created:");
+            System.out.println("🔹 Comprehensive Lead ID: " + (comprehensiveLead != null ? comprehensiveLead : "Failed"));
+            System.out.println("🔹 TP Lead ID: " + (tpLead != null ? tpLead : "Failed"));
+            System.out.println("🔹 SAOD Lead ID: " + (saodLead != null ? saodLead : "Failed"));
 
         } catch (Exception e) {
             System.err.println("❌ Error: " + e.getMessage());
@@ -42,13 +63,25 @@ public class CreateLead {
         }
     }
 
+    public static String getComprehensiveLead() {
+        return comprehensiveLead;
+    }
+
+    public static String getTpLead() {
+        return tpLead;
+    }
+
+    public static String getSaodLead() {
+        return saodLead;
+    }
+
     public static String getSessionTokenStatic() {
-        return sessionToken;  // Allow other classes to access the session token
+        return sessionToken;
     }
 
     private static String getSessionToken() throws IOException {
         if (sessionToken != null && !sessionToken.isEmpty()) {
-            return sessionToken;  // Return cached token if available
+            return sessionToken;
         }
 
         if (ApiCaller.getSessionToken() == null || ApiCaller.getSessionToken().isEmpty()) {
@@ -67,6 +100,7 @@ public class CreateLead {
 
     private static String createLead(String authToken, String policyType) throws IOException {
         String url = getConfigValue("mvBaseUrl") + getConfigValue("leadCreateEndpoint");
+        System.out.println("\n🛠️ Creating Lead for Policy Type: " + policyType.toUpperCase());
         System.out.println("📌 Create Lead API URL: " + url);
 
         String registrationNumber = generateRegistrationNumber(policyType);
