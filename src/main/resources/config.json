@@ -11,5 +11,7 @@
   "make": "/api/v1/make",
   "model": "/api/v1/model",
   "variant": "/api/v1/variant",
-  "updateLeadDetails": "/api/v1/insurance/lead/update"
+  "updateLeadDetails": "/api/v1/insurance/lead/update",
+  "insurer": "/api/v1/insurer",
+  "ncb": "/api/v1/ncb"
 }

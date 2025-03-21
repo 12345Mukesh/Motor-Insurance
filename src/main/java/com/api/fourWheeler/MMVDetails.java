@@ -293,8 +293,101 @@ public class MMVDetails {
         if (response != null && !response.isBlank()) {
             System.out.println("✅ Bundled Lead Creation Success!");
             System.out.println("🔍 Full Response: " + response);
+
+            // 🔹 Call Insurer API after successful lead creation
+            insurer(authToken);
         } else {
             System.err.println("❌ Bundled Lead Creation Failed!");
+        }
+    }
+
+    public static void insurer(String authToken) {
+        try {
+            // Get Insurer API URL
+            String url = getConfigValue("mvBaseUrl") + getConfigValue("insurer");
+
+            // Empty JSON Request Body
+            Map<String, Object> requestBody = Map.of();
+
+            // Send POST Request using shared method
+            String response = sendPostRequest(url, requestBody, authToken, "Insurer API");
+
+            // Handle Response
+            if (response != null) {
+                System.out.println("✅ Insurer API Call Success!");
+                System.out.println("🔍 Full Response: " + response);
+                getNCBDetails(authToken); // Call NCB API after successful insurer request
+            } else {
+                System.err.println("❌ Insurer API Call Failed!");
+            }
+        } catch (Exception e) {
+            System.err.println("❌ Error in Insurer API Call: " + e.getMessage());
+        }
+    }
+
+    public static void getNCBDetails(String authToken) {
+        try {
+            // Get NCB API URL
+            String url = getConfigValue("mvBaseUrl") + getConfigValue("ncb");
+
+            // Empty JSON Request Body
+            Map<String, Object> requestBody = Map.of();
+
+            // Send POST Request using shared method
+            String response = sendPostRequest(url, requestBody, authToken, "NCB Details API");
+
+            // Handle Response
+            if (response != null) {
+                System.out.println("✅ NCB Details API Call Success!");
+                System.out.println("🔍 Full Response: " + response);
+                prequoteVehicleDetails(authToken); // Call Prequote API after successful NCB request
+            } else {
+                System.err.println("❌ NCB Details API Call Failed!");
+            }
+        } catch (Exception e) {
+            System.err.println("❌ Error in NCB Details API Call: " + e.getMessage());
+        }
+    }
+
+
+    public static void prequoteVehicleDetails(String authToken) throws IOException {
+        // Validate if leads exist
+        if (comprehensiveLead == null || tpLead == null || saodLead == null) {
+            System.err.println("❌ Missing Lead IDs! Cannot fetch prequote vehicle details.");
+            return;
+        }
+
+        // Get URL from config.json
+        String url = getConfigValue("mvBaseUrl") + getConfigValue("pageData");
+
+        // 🔹 Map for different policy types
+        Map<String, String> leadMap = Map.of(
+                "Comprehensive", comprehensiveLead,
+                "TP", tpLead,
+                "SAOD", saodLead
+        );
+
+        // 🔹 Iterate through each lead and send the request
+        for (Map.Entry<String, String> entry : leadMap.entrySet()) {
+            String policyType = entry.getKey();
+            String leadId = entry.getValue();
+
+            // Construct JSON Request Body
+            Map<String, Object> requestBody = Map.of(
+                    "leadId", leadId,
+                    "pageType", "prequote-previous-policy-detail"
+            );
+
+            // Send POST Request using existing method
+            String response = sendPostRequest(url, requestBody, authToken, "Prequote Vehicle Details");
+
+            // ✅ Print Success or Failure Response
+            if (response != null) {
+                System.out.println("✅ Prequote Vehicle Details Success for " + policyType + "!");
+                System.out.println("🔍 Full Response: " + response);
+            } else {
+                System.err.println("❌ Prequote Vehicle Details Failed for " + policyType + "!");
+            }
         }
     }
 
