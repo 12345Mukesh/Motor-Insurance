@@ -52,29 +52,23 @@
 
 	<build>
 		<plugins>
-			<!-- Spring Boot Maven Plugin (with Corrected Main Class) -->
+			<!-- Spring Boot Maven Plugin (Corrected Main Class) -->
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 				<configuration>
-					<mainClass>com.api.com.api.fourWheeler.CreateLead</mainClass>
+					<mainClass>com.api.fourWheeler.MMVDetails</mainClass>
 				</configuration>
 			</plugin>
 
-			<!-- Maven JAR Plugin to Ensure Manifest Contains Main Class -->
+			<!-- Maven JAR Plugin (No need to declare mainClass again) -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-jar-plugin</artifactId>
 				<version>3.4.2</version>
-				<configuration>
-					<archive>
-						<manifest>
-							<mainClass>com.api.com.api.fourWheeler.CreateLead</mainClass>
-						</manifest>
-					</archive>
-				</configuration>
 			</plugin>
 		</plugins>
 	</build>
+
 
 </project>

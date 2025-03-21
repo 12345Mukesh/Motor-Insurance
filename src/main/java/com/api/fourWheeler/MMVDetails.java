@@ -7,8 +7,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 public class MMVDetails {
     private static final RestTemplate restTemplate = new RestTemplate();
