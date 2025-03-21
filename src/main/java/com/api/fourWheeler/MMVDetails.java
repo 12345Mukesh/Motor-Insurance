@@ -263,7 +263,7 @@ public class MMVDetails {
         String registrationNumber = "MH01";
         String businessType = "car";
         String policySubType = "new";
-        String customerName = "";
+        String customerName = "pat";
         String mobileNumber = "9876543210";
 
         // 🔹 Construct Lead Request Body
