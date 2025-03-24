@@ -1,15 +1,20 @@
 package com.api.fourWheeler;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.http.*;
-import org.springframework.web.client.RestTemplate;
-
 import java.io.File;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
-import java.util.*;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+
+
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.springframework.http.*;
+import org.springframework.web.client.RestTemplate;
 
 
 
@@ -23,40 +28,145 @@ public class MMVDetails {
     private static String comprehensiveLead;
     private static String tpLead;
     private static String saodLead;
+    private static String bundledLead;
+    private static String authToken;
+
+
+    private static String selectedPolicy;
+
+    static {
+        try {
+            selectedPolicy = getConfigValue("selectedPolicy");
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static final List<Integer> insurerIds = new ArrayList<>();
+    private static final List<Integer> ncbIds = new ArrayList<>();
+
+    private static int insurerIndex = 10;
+    private static int ncbIndex = 2;
 
     public static void main(String[] args) {
         try {
             System.out.println("🚀 Running CreateLead before MMVDetails...");
-            CreateLead.main(null);
+            CreateLead.main(null); // Run CreateLead to generate leads
 
+            // Fetch individual lead IDs
             comprehensiveLead = CreateLead.getComprehensiveLead();
             tpLead = CreateLead.getTpLead();
             saodLead = CreateLead.getSaodLead();
 
-            if (comprehensiveLead == null || tpLead == null || saodLead == null) {
-                System.err.println("❌ Failed to retrieve all required Lead IDs! Aborting...");
-                return;
-            }
-
-            String authToken = getSessionToken();
+            authToken = CreateLead.getSessionTokenStatic();
             if (authToken == null) {
-                System.err.println("❌ Failed to retrieve valid session token!");
+                System.err.println("❌ Failed to retrieve session token!");
                 return;
             }
-            System.out.println("🔑 Using Stored Session Token: [" + authToken + "]");
+            System.out.println("🔑 Using Session Token: " + authToken);
 
+            if (selectedPolicy == null || selectedPolicy.isEmpty()) {
+                System.err.println("❌ selectedPolicy is missing in config.json!");
+                return;
+            }
+
+            selectedPolicy = selectedPolicy.toLowerCase();
+            // Convert "all" to a list of all policies
+            List<String> policiesToRun = getPoliciesToRun(selectedPolicy);
+
+            if (policiesToRun.isEmpty()) {
+                System.err.println("❌ No policies selected! Exiting...");
+                return;
+            }
+
+            // Fetch manufacturer, model, and variant details
             getManufacturerList(authToken);
             Thread.sleep(3000);
             fetchModelAndCallVariantAPI(authToken);
+
+            // If "bundled" is needed, create the lead
+            if (policiesToRun.contains("bundled")) {
+                System.out.println("\n🚀 Creating Bundled Lead...");
+                bundledLead = bundledLead(authToken);
+                if (bundledLead == null) {
+                    System.err.println("❌ Bundled Lead Creation Failed!");
+                }
+            }
+
+            // ✅ Process each policy dynamically
+            for (String policy : policiesToRun) {
+                String leadId = getLeadIdForPolicy(policy);
+                if (leadId != null) {
+                    processPolicy(authToken, policy, leadId); // Centralized logic
+                } else {
+                    System.err.println("⚠️ Skipping policy " + policy + " due to missing leadId.");
+                }
+            }
+
         } catch (Exception e) {
             System.err.println("❌ Error in MMVDetails execution: " + e.getMessage());
             e.printStackTrace();
         }
     }
 
-    private static String getSessionToken() throws IOException {
-        return CreateLead.getSessionTokenStatic();
+
+
+    public static List<String> getPoliciesToRun(String selectedPolicy) {
+        List<String> policies = new ArrayList<>();
+
+        if ("all".equals(selectedPolicy)) {
+            policies.addAll(Arrays.asList("comprehensive", "tp", "saod", "bundled"));
+        } else {
+            policies.add(selectedPolicy);
+        }
+        return policies;
     }
+
+    private static String getLeadIdForPolicy(String policyType) {
+        policyType = policyType.toLowerCase();
+
+        switch (policyType) {
+            case "comprehensive":
+                return comprehensiveLead;
+            case "tp":
+                return tpLead;
+            case "saod":
+                return saodLead;
+            case "bundled":
+                System.out.println("🚀 Creating Bundled Lead...");
+                try {
+                    return bundledLead(authToken); // ✅ Handle exception properly
+                } catch (IOException e) {
+                    System.err.println("❌ Error creating Bundled Lead: " + e.getMessage());
+                    return null;
+                }
+            default:
+                System.err.println("❌ Unknown policy type: " + policyType);
+                return null;
+        }
+    }
+
+    private static void processPolicy(String authToken, String policy, String leadId) throws IOException, InterruptedException {
+        if (leadId == null || leadId.isEmpty()) {
+            System.err.println("⚠️ Skipping " + policy + " due to missing lead ID.");
+            return;
+        }
+
+        System.out.println("📝 Processing lead: " + leadId + " for policy: " + policy.toUpperCase());
+
+        // If the policy is "bundled", no need to hit the insurer method
+        if ("bundled".equalsIgnoreCase(policy)) {
+            System.out.println("✅ Bundled policy selected. No further processing required.");
+            return;
+        }
+
+
+        // For other policies, update vehicle details, call insurer, and fetch prequote details
+        updateVehicleDetails(authToken, policy, leadId);
+        insurer(authToken);
+        prequoteVehicleDetails(authToken, leadId);
+    }
+
 
     public static void getManufacturerList(String authToken) throws IOException {
         String url = getConfigValue("mvBaseUrl") + getConfigValue("make");
@@ -90,6 +200,7 @@ public class MMVDetails {
         return false;
     }
 
+
     public static void fetchVariantList(String authToken) throws IOException {
         String url = getConfigValue("mvBaseUrl") + getConfigValue("variant");
         Map<String, Object> requestBody = new HashMap<>();
@@ -106,171 +217,91 @@ public class MMVDetails {
 
         System.out.println("🟠 Full Variant List Response:\n" + variantListResponse);
 
-//        // 🔹 Parse JSON response
-//        ObjectMapper objectMapper = new ObjectMapper();
-//        JsonNode rootNode;
-//        try {
-//            rootNode = objectMapper.readTree(variantListResponse);
-//        } catch (IOException e) {
-//            System.err.println("❌ Failed to parse API response: " + e.getMessage());
-//            return;
-//        }
-//
-//        JsonNode variantListNode = rootNode.path("data").path("variantList");
-//        if (!variantListNode.isArray() || variantListNode.isEmpty()) {
-//            System.err.println("❌ 'variantList' is missing or empty in response!");
-//            return;
-//        }
-//
-//        // 🔍 Debugging: Print all received variant IDs
-//        System.out.print("🔍 Available Variant IDs: ");
-//        boolean variantFound = false;
-//
-//        for (JsonNode variant : variantListNode) {
-//            int foundVariantId = variant.path("variantId").asInt(-1);
-//            if (foundVariantId == -1) continue;
-//
-//            System.out.print(foundVariantId + " ");
-//            if (foundVariantId == VARIANT_ID) {  // 🔹 Checking hardcoded variant ID
-//                variantFound = true;
-//            }
-//        }
-//        System.out.println();
-
-        // ✅ Variant Check Output
-//        if (variantFound) {
-//            System.out.println("✅ Variant ID "+ VARIANT_ID + "  found!");
-//        } else {
-//            System.err.println("❌ Variant ID "+VARIANT_ID +" not found!");
-//        }
-
-        // 🔹 Directly trigger `updateVehicleDetails`, independent of the variant check
-        updateVehicleDetails(authToken);
     }
 
 
-    public static void updateVehicleDetails(String authToken) throws IOException {
+
+    public static void updateVehicleDetails(String authToken, String policy, String leadId) throws IOException {
         String url = getConfigValue("mvBaseUrl") + getConfigValue("updateLeadDetails");
 
-        if (comprehensiveLead == null || tpLead == null || saodLead == null) {
-            System.err.println("❌ Cannot update lead details - Missing Lead IDs!");
-            return;
-        }
-
-        // 🔹 Define details for each policy type
-        Map<String, String> leadMap = Map.of(
-                "Comprehensive", comprehensiveLead,
-                "TP", tpLead,
-                "SAOD", saodLead
-        );
-
         Map<String, Integer> registrationYears = Map.of(
-                "Comprehensive", 2018,
-                "TP", 2015,
-                "SAOD", 2024
+                "comprehensive", 2018,
+                "tp", 2015,
+                "saod", 2024
         );
 
         Map<String, Integer> daysToAdd = Map.of(
-                "Comprehensive", 15,
-                "TP", 2,
-                "SAOD", 5
+                "comprehensive", 15,
+                "tp", 2,
+                "saod", 5
         );
 
         Map<String, String> customerNames = Map.of(
-                "Comprehensive", "Alice",
-                "TP", "Bob",
-                "SAOD", "Charlie"
+                "comprehensive", "Alice",
+                "tp", "Bob",
+                "saod", "Charlie"
         );
 
         Map<String, String> customerPhones = Map.of(
-                "Comprehensive", "9876543210",
-                "TP", "9123456789",
-                "SAOD", "9988776655"
+                "comprehensive", "9876543210",
+                "tp", "9123456789",
+                "saod", "9988776655"
         );
 
-        boolean updateSuccessful = false;
+        String registrationDate = generateFixedRegistrationDate(
+                registrationYears.get(policy),
+                daysToAdd.get(policy)
+        );
 
-        for (Map.Entry<String, String> entry : leadMap.entrySet()) {
-            String policyType = entry.getKey();
-            String leadId = entry.getValue();
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("leadId", leadId);
+        requestBody.put("makeId", MAKE_ID);
+        requestBody.put("modelId", MODEL_ID);
+        requestBody.put("variantId", VARIANT_ID);
+        requestBody.put("fuelType", "petrol");
+        requestBody.put("leadSource", null);
 
-            // Generate Registration Date based on policy type
-            String registrationDate = generateFixedRegistrationDate(registrationYears.get(policyType), daysToAdd.get(policyType));
+        requestBody.put("leadDetails", Map.of(
+                "cubicCapacity", 1197,
+                "fuelType", "petrol",
+                "registrationDate", registrationDate
+        ));
 
-            // 🔹 Construct request body
-            Map<String, Object> requestBody = new HashMap<>();
-            requestBody.put("leadId", leadId);
-            requestBody.put("makeId", MAKE_ID);
-            requestBody.put("modelId", MODEL_ID);
-            requestBody.put("variantId", VARIANT_ID);
-            requestBody.put("fuelType", "petrol");
-            requestBody.put("leadSource", null);
+        requestBody.put("leadCustomerDetails", Map.of(
+                "name", customerNames.get(policy),
+                "mobileNumber", customerPhones.get(policy)
+        ));
 
-            requestBody.put("leadDetails", Map.of(
-                    "cubicCapacity", 1197,
-                    "fuelType", "petrol",
-                    "registrationDate", registrationDate
-            ));
+        System.out.println("\n📝 Request Data for " + policy.toUpperCase() + ":");
+        System.out.println(new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(requestBody));
 
-            requestBody.put("leadCustomerDetails", Map.of(
-                    "name", customerNames.get(policyType),
-                    "mobileNumber", customerPhones.get(policyType)
-            ));
+        String response = sendPostRequest(url, requestBody, authToken, "Update Lead");
 
-            // 🖨 **Print Full Request Before Sending**
-            System.out.println("\n📝 Request Data for " + policyType.toUpperCase() + ":");
-            System.out.println(new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(requestBody));
+        System.out.println("🔹 Response for " + policy.toUpperCase() + ": " + response);
 
-            // 🔹 Send API Request
-            String response = sendPostRequest(url, requestBody, authToken, "Update Lead");
-
-            // ✅ Print Success Response Based on Policy Type
-            if (response != null && !response.isBlank()) {
-                System.out.println("✅ Update Lead Success for " + policyType.toUpperCase() + "!");
-                System.out.println("🔍 Full Response: " + response);
-                updateSuccessful = true;  // Mark as successful
-            } else {
-                System.err.println("❌ Update Lead Failed for " + policyType.toUpperCase() + "!");
-            }
-        }
-
-        // 🔹 If at least one lead update is successful, trigger `bundledLead`
-        if (updateSuccessful) {
-            System.out.println("\n🚀 Triggering Bundled Lead after successful updates...");
-            bundledLead(authToken);
+        if (response != null && !response.isBlank()) {
+            System.out.println("✅ Update Lead Success for " + policy.toUpperCase() + "!");
+        } else {
+            System.err.println("❌ Update Lead Failed for " + policy.toUpperCase() + "!");
         }
     }
 
 
-    /**
-     * Generates a registration date based on today's date + X days, with a fixed year.
-     */
     private static String generateFixedRegistrationDate(int year, int daysToAdd) {
         Calendar calendar = Calendar.getInstance();
-        calendar.add(Calendar.DAY_OF_MONTH, daysToAdd); // Add custom days per policy
-        calendar.set(Calendar.YEAR, year); // Set the specified year
+        calendar.add(Calendar.DAY_OF_MONTH, daysToAdd);
+        calendar.set(Calendar.YEAR, year);
         return new SimpleDateFormat("yyyy-MM-dd").format(calendar.getTime());
     }
 
-    public static void bundledLead(String authToken) throws IOException {
-
+    public static String bundledLead(String authToken) throws IOException {
         String url = getConfigValue("mvBaseUrl") + getConfigValue("leadCreateEndpoint");
-        // 🔹 Generate Today's Date (ISO Format)
         String registrationDate = LocalDate.now().toString();
-        System.out.println("📅 Today's Date: " + registrationDate);
 
-        // 🔹 Hardcoded Values
-        String registrationNumber = "MH01";
-        String businessType = "car";
-        String policySubType = "new";
-        String customerName = "pat";
-        String mobileNumber = "9876543210";
-
-        // 🔹 Construct Lead Request Body
         Map<String, Object> requestBody = new HashMap<>();
-        requestBody.put("registrationNumber", registrationNumber);
-        requestBody.put("businessType", businessType);
-        requestBody.put("insurancePolicySubType", policySubType);
+        requestBody.put("registrationNumber", "MH01");
+        requestBody.put("businessType", "car");
+        requestBody.put("insurancePolicySubType", "new");
         requestBody.put("registrationDate", registrationDate);
         requestBody.put("makeId", MAKE_ID);
         requestBody.put("modelId", MODEL_ID);
@@ -278,45 +309,56 @@ public class MMVDetails {
         requestBody.put("leadSource", "rm");
 
         requestBody.put("leadCustomerDetails", Map.of(
-                "name", customerName,
-                "mobileNumber", mobileNumber
+                "name", "pat",
+                "mobileNumber", "9876543210"
         ));
 
-        // 🖨 **Print Full Request Before Sending**
         System.out.println("\n📝 Bundled Lead Creation Request:");
         System.out.println(new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(requestBody));
 
-        // 🔹 Send API Request
         String response = sendPostRequest(url, requestBody, authToken, "Bundled Lead Creation");
 
-        // ✅ Print Success or Failure Response
         if (response != null && !response.isBlank()) {
             System.out.println("✅ Bundled Lead Creation Success!");
             System.out.println("🔍 Full Response: " + response);
 
-            // 🔹 Call Insurer API after successful lead creation
-            insurer(authToken);
+            JsonNode responseJson = new ObjectMapper().readTree(response);
+            String leadId = responseJson.path("data").path("leadId").asText();
+            System.out.println("🆔 Bundled Lead ID: " + leadId);
+
+            if (leadId.isEmpty()) {
+                System.err.println("❌ Failed to extract Bundled Lead ID from response!");
+                return null;
+            }
+
+            return leadId;
         } else {
             System.err.println("❌ Bundled Lead Creation Failed!");
+            return null;
         }
     }
 
+
     public static void insurer(String authToken) {
         try {
-            // Get Insurer API URL
             String url = getConfigValue("mvBaseUrl") + getConfigValue("insurer");
 
             // Empty JSON Request Body
-            Map<String, Object> requestBody = Map.of();
+            String response = sendPostRequest(url, Map.of(), authToken, "Insurer API");
 
-            // Send POST Request using shared method
-            String response = sendPostRequest(url, requestBody, authToken, "Insurer API");
-
-            // Handle Response
             if (response != null) {
                 System.out.println("✅ Insurer API Call Success!");
                 System.out.println("🔍 Full Response: " + response);
-                getNCBDetails(authToken); // Call NCB API after successful insurer request
+
+                // Extract and store all insurer IDs
+                List<Integer> extractedInsurerIds = extractInsurerIds(response);
+                insurerIds.addAll(extractedInsurerIds);
+
+                // Debug Print: Check if IDs are stored
+                System.out.println("📌 Stored Insurer IDs: " + insurerIds);
+
+                // Call NCB API next
+                getNCBDetails(authToken);
             } else {
                 System.err.println("❌ Insurer API Call Failed!");
             }
@@ -327,69 +369,221 @@ public class MMVDetails {
 
     public static void getNCBDetails(String authToken) {
         try {
-            // Get NCB API URL
             String url = getConfigValue("mvBaseUrl") + getConfigValue("ncb");
 
             // Empty JSON Request Body
-            Map<String, Object> requestBody = Map.of();
+            String response = sendPostRequest(url, Map.of(), authToken, "NCB Details API");
 
-            // Send POST Request using shared method
-            String response = sendPostRequest(url, requestBody, authToken, "NCB Details API");
-
-            // Handle Response
             if (response != null) {
-                System.out.println("✅ NCB Details API Call Success!");
+                System.out.println("✅ NCB API Call Success!");
                 System.out.println("🔍 Full Response: " + response);
-                prequoteVehicleDetails(authToken); // Call Prequote API after successful NCB request
+
+                List<Integer> extractedNCBIds = extractNCBIds(response);
+                ncbIds.addAll(extractedNCBIds);
+
+                // Debug Print: Check if IDs are stored
+                System.out.println("📌 Stored NCB IDs: " + ncbIds);
+
             } else {
-                System.err.println("❌ NCB Details API Call Failed!");
+                System.err.println("❌ NCB API Call Failed!");
             }
         } catch (Exception e) {
-            System.err.println("❌ Error in NCB Details API Call: " + e.getMessage());
+            System.err.println("❌ Error in NCB API Call: " + e.getMessage());
         }
     }
 
+    // Extracts all Insurer IDs from API response
+    private static List<Integer> extractInsurerIds(String response) {
+        List<Integer> ids = new ArrayList<>();
+        try {
+            ObjectMapper objectMapper = new ObjectMapper();
+            JsonNode jsonResponse = objectMapper.readTree(response);
+            JsonNode brandList = jsonResponse.path("data").path("brandList");
 
-    public static void prequoteVehicleDetails(String authToken) throws IOException {
-        // Validate if leads exist
-        if (comprehensiveLead == null || tpLead == null || saodLead == null) {
-            System.err.println("❌ Missing Lead IDs! Cannot fetch prequote vehicle details.");
+            if (brandList.isArray()) {
+                for (JsonNode brand : brandList) {
+                    int id = brand.path("id").asInt(0);
+                    if (id != 0) {
+                        ids.add(id);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("⚠️ Error extracting Insurer IDs: " + e.getMessage());
+        }
+        return ids;
+    }
+
+    // Extracts all NCB IDs from API response
+    private static List<Integer> extractNCBIds(String response) {
+        List<Integer> ids = new ArrayList<>();
+        try {
+            ObjectMapper objectMapper = new ObjectMapper();
+            JsonNode jsonResponse = objectMapper.readTree(response);
+            JsonNode ncbList = jsonResponse.path("data").path("ncbList");
+
+            if (ncbList.isArray()) {
+                for (JsonNode ncb : ncbList) {
+                    int id = ncb.path("ncbId").asInt(0);
+                    if (id != 0) {
+                        ids.add(id);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("⚠️ Error extracting NCB IDs: " + e.getMessage());
+        }
+        return ids;
+    }
+
+
+    public static void prequoteVehicleDetails(String authToken, String leadId) throws IOException {
+        String url = getConfigValue("mvBaseUrl") + getConfigValue("pageData");
+        Map<String, Object> requestBody = Map.of(
+                "leadId", leadId,
+                "pageType", "prequote-previous-policy-detail"
+        );
+        String response = sendPostRequest(url, requestBody, authToken, "Prequote Vehicle Details");
+
+        if (response != null) {
+            System.out.println("✅ Prequote Vehicle Details Success!");
+            System.out.println("🔹 Response for Prequote: " + response);
+
+        } else {
+            System.err.println("❌ Prequote Vehicle Details Failed!");
+        }
+        updateLeadForPolicy(authToken);
+    }
+
+    private static void updateLeadForPolicy(String authToken) throws IOException {
+        try {
+            String selectedPolicy = getConfigValue("selectedPolicy").toLowerCase(); // Read from config.json
+
+            // If "all" is selected, process all policies
+            if (selectedPolicy.equals("all")) {
+                updateForPolicy(authToken, "comprehensive");
+                updateForPolicy(authToken, "tp");
+                updateForPolicy(authToken, "saod");
+                return; // Early return after processing all policies
+            }
+
+            // Validate if selectedPolicy is one of the allowed types
+            if (!selectedPolicy.equals("comprehensive") &&
+                    !selectedPolicy.equals("tp") &&
+                    !selectedPolicy.equals("saod")) {
+                System.err.println("❌ Invalid or unsupported policy type: " + selectedPolicy);
+                return;
+            }
+
+            // Process the selected policy
+            updateForPolicy(authToken, selectedPolicy);
+
+        } catch (Exception e) {
+            System.err.println("❌ Error updating " + getConfigValue("selectedPolicy") + ": " + e.getMessage());
+        }
+    }
+
+    private static void updateForPolicy(String authToken, String selectedPolicy) throws IOException {
+        String leadId = getLeadIdForPolicy(selectedPolicy);
+
+        if (leadId == null || leadId.isEmpty()) {
+            System.err.println("❌ No Lead ID found for policy: " + selectedPolicy);
             return;
         }
 
-        // Get URL from config.json
-        String url = getConfigValue("mvBaseUrl") + getConfigValue("pageData");
+        if (insurerIds.isEmpty() || ncbIds.isEmpty()) {
+            System.err.println("⚠️ Cannot update lead: Insurer or NCB list is empty!");
+            return;
+        }
 
-        // 🔹 Map for different policy types
-        Map<String, String> leadMap = Map.of(
-                "Comprehensive", comprehensiveLead,
-                "TP", tpLead,
-                "SAOD", saodLead
-        );
+        if (insurerIndex < 0 || insurerIndex >= insurerIds.size()) {
+            System.err.println("❌ Invalid insurerIndex: " + insurerIndex);
+            return;
+        }
+        if (ncbIndex < 0 || ncbIndex >= ncbIds.size()) {
+            System.err.println("❌ Invalid ncbIndex: " + ncbIndex);
+            return;
+        }
 
-        // 🔹 Iterate through each lead and send the request
-        for (Map.Entry<String, String> entry : leadMap.entrySet()) {
-            String policyType = entry.getKey();
-            String leadId = entry.getValue();
+        int selectedInsurerId = insurerIds.get(insurerIndex);
+        int selectedNCBId = determineNCBId(selectedPolicy);
 
-            // Construct JSON Request Body
-            Map<String, Object> requestBody = Map.of(
-                    "leadId", leadId,
-                    "pageType", "prequote-previous-policy-detail"
-            );
+        // Construct the request body
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("leadId", leadId);
+        requestBody.put("insurerId", selectedInsurerId);
+        requestBody.put("ncbId", selectedNCBId);
 
-            // Send POST Request using existing method
-            String response = sendPostRequest(url, requestBody, authToken, "Prequote Vehicle Details");
+        // Date formatting for previous policy details
+        LocalDate baseDate = LocalDate.now().plusDays(15);
+        String formattedBaseDate = baseDate.format(DateTimeFormatter.ISO_LOCAL_DATE);
+        String formattedTPExpiryDate = selectedPolicy.equals("saod")
+                ? baseDate.plusYears(2).format(DateTimeFormatter.ISO_LOCAL_DATE)
+                : formattedBaseDate;
 
-            // ✅ Print Success or Failure Response
-            if (response != null) {
-                System.out.println("✅ Prequote Vehicle Details Success for " + policyType + "!");
-                System.out.println("🔍 Full Response: " + response);
-            } else {
-                System.err.println("❌ Prequote Vehicle Details Failed for " + policyType + "!");
-            }
+        // Lead details
+        Map<String, Object> leadDetails = new HashMap<>();
+        leadDetails.put("previousODExpiryDate", formattedBaseDate);
+        leadDetails.put("previousTPExpiryDate", formattedTPExpiryDate);
+        leadDetails.put("hasPreviousPolicy", true);
+        leadDetails.put("previousPolicyType", selectedPolicy);
+        leadDetails.put("previousInsurerId", selectedInsurerId);
+        leadDetails.put("previousNCBId", selectedNCBId);
+        leadDetails.put("ownershipTransfer", false);
+        leadDetails.put("leadSource", "rm");
+
+        requestBody.put("leadDetails", leadDetails);
+
+        // Fetch and validate config values for the API URL
+        String baseUrl = getConfigValue("mvBaseUrl");
+        String updateLeadEndpoint = getConfigValue("updateLeadDetails");
+
+        if (baseUrl == null || updateLeadEndpoint == null) {
+            System.err.println("❌ mvBaseUrl or updateLead endpoint is not configured properly!");
+            return;
+        }
+
+        // Form the complete URL
+        String url = baseUrl + updateLeadEndpoint;
+
+        // Print the URL and request body being sent
+        System.out.println("🔗 Sending request to URL: " + url);
+        System.out.println("📤 Request Body: " + requestBody);
+
+        // Sending the POST request
+        String response = sendPostRequest(url, requestBody, authToken, "updateLeadDetails");
+
+        // Print the response or failure message
+        if (response != null) {
+            System.out.println("✅ Lead Updated Successfully for " + selectedPolicy);
+            System.out.println("📌 Lead ID: " + leadId + " (Policy: " + selectedPolicy + ")");
+            System.out.println("📌 Selected Insurer ID: " + selectedInsurerId + " (Position: " + insurerIndex + ")");
+            System.out.println("📌 Selected NCB ID: " + selectedNCBId + " (Position: " + ncbIndex + ")");
+            System.out.println("📆 Previous OD Expiry Date: " + formattedBaseDate);
+            System.out.println("📆 Previous TP Expiry Date: " + formattedTPExpiryDate);
+            System.out.println("🔍 API Response: " + response);
+        } else {
+            System.err.println("❌ Update Lead API Call Failed for " + selectedPolicy);
         }
     }
+
+
+
+    private static int determineNCBId(String policyType) {
+        switch (policyType.toLowerCase()) {
+            case "comprehensive":
+                return ncbIds.get(ncbIndex);
+            case "tp":
+                return (ncbIndex >= 1) ? ncbIds.get(1) : ncbIds.get(0);
+            case "saod":
+                return (ncbIndex >= 2) ? ncbIds.get(ncbIndex - 2) : ncbIds.get(0);
+            default:
+                System.err.println("❌ Unknown policy type: " + policyType);
+                return 0;
+        }
+    }
+
+
 
     private static String sendPostRequest(String url, Map<String, Object> requestBody, String authToken, String requestType) {
         try {
@@ -412,11 +606,12 @@ public class MMVDetails {
         }
     }
 
-
-
     private static String getConfigValue(String key) throws IOException {
         return new ObjectMapper().readTree(new File(CONFIG_FILE)).path(key).asText(null);
     }
+
+
+
 
 
 }
