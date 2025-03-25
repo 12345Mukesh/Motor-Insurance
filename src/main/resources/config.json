@@ -6,7 +6,7 @@
   "phone": "9872532221",
   "otp": 2222,
   "communicationConsent": true,
-  "selectedPolicy" : "all",
+  "selectedPolicy" : "saod",
   "leadCreateEndpoint": "/api/v1/insurance/lead/create",
   "pageData" : "/api/v1/insurance/refresh-journey/page-data",
   "make": "/api/v1/make",
