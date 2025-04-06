@@ -5,6 +5,7 @@ import org.springframework.http.*;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Random;
 
 public class CreateLeadForMultipleUsers {
@@ -12,6 +13,7 @@ public class CreateLeadForMultipleUsers {
     private static final String LEAD_URL = "https://api-stg.gromo.in/api/v2/miscellaneousLeads?allowSelfLead=false";
     private static final String LEAD_UPDATE_URL = "https://api-stg.gromo.in/api/v2/miscellaneousLeadUpdated";
 
+    private static List<String> gpuidList;
     private String leadId;  // Lead ID for tracking
 
     public ResponseEntity<String> createLead(String gpuid, String productTypeId, String productTypeName, int kpi1Payin, int kpi1Payout) {
@@ -113,15 +115,32 @@ public class CreateLeadForMultipleUsers {
         return phone.toString();
     }
 
+
+    public static void setGpuidList(List<String> gpuids) {
+        gpuidList = gpuids;
+    }
+
+    public static List<String> getGpuidList() {
+        return gpuidList;
+    }
+
+    public void createLeads() {
+        for (String gpuid : gpuidList) {
+            System.out.println("Creating lead for GPUID: " + gpuid);
+            // Call API to create lead using gpuid
+        }
+    }
+
     public static void main(String[] args) {
-        String[] gpuidList = {"U7D25578", "U2HJ6693", "S8KU4555", "3I100783", "OB6A6738", "UV1Y1655", "9JXA6113", "YJVI1494", "BTPN0403", "EUYU1094"};
-        String[] productTypeIds = {"344", "400", "269", "358","414","352","366","344", "400", "269"};
-        String[] productTypeNames = {"Swiggy HDFC Bank Credit Card", "BlinkX", "KreditBee", "Groww Mutual Funds","Kotak 811 Saving Account","Volt Money","Tata Capital Business Loan","Swiggy HDFC Bank Credit Card", "BlinkX", "KreditBee"};
-        int[] kpi1Payins = {5500, 25000, 77500, 870, 310, 890,1000, 5600, 26000, 77600};
-        int[] kpi1Payouts = {5100, 20100, 75100, 500, 200, 700, 900, 5200, 20200, 75200};
+        String[] gpuidList = { "76VF7719", "2IH10333", "58VE8875"};
+        int[] kpi1Payouts =  {  100,2000,           5000,  };
+        String[] productTypeIds = {"344", "400", "269"};
+        String[] productTypeNames = {"Swiggy HDFC Bank Credit Card", "BlinkX", "KreditBee"};
+        int[] kpi1Payins = {5500, 36000, 100500};
 
 
-        for (int i = 0; i < 10; i++) {
+
+        for (int i = 0; i < 3; i++) {
             CreateLeadForMultipleUsers leadService = new CreateLeadForMultipleUsers();
 
             System.out.println("\nCreating lead for User " + (i + 1) + " with GPUID: " + gpuidList[i]);

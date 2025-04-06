@@ -20,10 +20,10 @@ public class SignUpWithReferralSingleUser {
 
     private String username = USERNAME_PREFIX + generateRandomDigits();
     private String firstName = generateRandomFirstName();
-    private String gpuid;
+    public String gpuid;
     private String accessToken;
     private String password;
-    private String referrer = "E7JO3899";
+    private String referrer = "6ZAW4781";
     private final String gaid = "6ce84844-e74d-4d26-be29-db515aa9f4b5"; // Ensure gaid is initialized
 
 

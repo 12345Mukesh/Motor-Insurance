@@ -1,0 +1,25 @@
+{
+  "API_URL": "http://localhost:3000/api/v1/insurance-wallet/workflow/",
+  "merchant": "merchant/onboard",
+  "domain": "gromo",
+  "name": "gromo-insure",
+  "category": "general",
+  "purpose": "bank",
+  "accountOwnerId": "119990",
+  "metadata": {
+    "contactEmail": "contact@tataaig.com",
+    "contactPhone": "1234567890"
+  },
+  "gp_Account" : "gp/onboard",
+  "isPosp": true,
+  "workflow": "process",
+  "eventType": "sale4w",
+  "transactionDate": "2023-03-06T10:15:30.000Z",
+  "leadId": "12",
+  "payoutAmount" : "1000",
+  "freelookDate": "2025-03-20",
+  "insurer": "Tata",
+  "category": "4w",
+  "paymentDoneDate" : "2025-04-26",
+  "policyStartDate": "2025-04-01"
+}

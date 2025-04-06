@@ -2,10 +2,12 @@ package SignUp;
 
 import org.json.JSONObject;
 import org.springframework.http.*;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
-
 import java.time.LocalDate;
 import java.util.Random;
+
+
 
 public class CreateLead {
     private final RestTemplate restTemplate = new RestTemplate();
@@ -13,9 +15,9 @@ public class CreateLead {
     private static final String LEAD_UPDATE_URL = "https://api-stg.gromo.in/api/v2/miscellaneousLeadUpdated";
     private static final String productTypeId = "344";
     private static final String productTypeName = "Swiggy HDFC Bank Credit Card";
-    private static final int kpi1Payin = 900;
-    private static final int kpi1Payout = 5100;
-    private static String gpuid = "EH1T5184";
+    private static final int kpi1Payin = 6000;
+    private static final int kpi1Payout = 5000;
+    private static String gpuid = "OJ6H5754";
     private String leadId;
 
     public ResponseEntity<String> createLead() {
@@ -62,12 +64,13 @@ public class CreateLead {
         }
 
         try {
-            Thread.sleep(3000); // Wait for 3 seconds before updating lead
+            Thread.sleep(10000); // Wait for 10 seconds before updating lead
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
 
-        String todayDate = LocalDate.now().toString();
+//       String todayDate = LocalDate.now().toString();
+        String todayDate = "2025-03-09";
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -116,6 +119,11 @@ public class CreateLead {
         }
         return phone.toString();
     }
+
+    public static void setStaticGpuid(String newGpuid) {
+        gpuid = newGpuid;
+    }
+
 
     public static void main(String[] args) {
         CreateLead leadService = new CreateLead();

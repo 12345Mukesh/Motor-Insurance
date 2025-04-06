@@ -7,11 +7,10 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-import java.util.*;
+import java.util.Random;
 
 @Service
-public class SignUpWithReferralWithMultipleUsers {
+public class SignUpWithoutReferralSingleUser {
     private final RestTemplate restTemplate = new RestTemplate();
     private static final String SIGNUP_URL = "https://auth-stg.gromo.in/oauth/otp";
     private static final String TOKEN_URL = "https://auth-stg.gromo.in/oauth/token";
@@ -19,26 +18,17 @@ public class SignUpWithReferralWithMultipleUsers {
     private static final String AUTH_HEADER = "Basic QjZCRWV2OUppSGcxaDZLQ3U2UHlCVXZ1OmU2U1lwNDBxTzZWcndmRTVuOXJhYTB4RG1oNWlGc0xQRjY4U2tqWHhCSFRUTVBWSw==";
     private static final String USERNAME_PREFIX = "54321";
 
-    private String username;
+    private String username = USERNAME_PREFIX + generateRandomDigits();
 
+//    private String username = "8755334478";
     private String firstName = generateRandomFirstName();
-    private String gpuid;
+    public String gpuid;
     private String accessToken;
     private String password;
-    private static String referrer = "6ZAW4781";
     private final String gaid = "6ce84844-e74d-4d26-be29-db515aa9f4b5"; // Ensure gaid is initialized
 
-    private static String[] gpuids;
 
-
-    public SignUpWithReferralWithMultipleUsers() {
-        this.username = USERNAME_PREFIX + generateRandomDigits();
-        this.firstName = generateRandomFirstName();
-    }
-
-
-    private static String generateRandomDigits()
-    {
+    private static String generateRandomDigits() {
         return String.valueOf(10000 + new Random().nextInt(90000));
     }
 
@@ -61,79 +51,40 @@ public class SignUpWithReferralWithMultipleUsers {
         }
         return getAccessToken();
     }
-
     private String getPasswordFromSignup(String gaid) {
         System.out.println("Executing: getPasswordFromSignup()");
-
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("Authorization", AUTH_HEADER);
 
-        // Construct the signup request URL correctly
-        String url = SIGNUP_URL + "?username=" + username + "&gaid=" + gaid;
-
+        String url = SIGNUP_URL + "?username=" + username + "&gaid=" + this.gaid;
         HttpEntity<Void> entity = new HttpEntity<>(headers);
         ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
-
-        System.out.println("Signup API Response Status: " + response.getStatusCode());
 
         if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
             try {
                 ObjectMapper objectMapper = new ObjectMapper();
                 JsonNode jsonNode = objectMapper.readTree(response.getBody());
+                gpuid = jsonNode.has("gpuid") ? jsonNode.get("gpuid").asText() : null;
+                password = jsonNode.has("password") ? jsonNode.get("password").asText() : null;
 
-                // Print full response for debugging
-                System.out.println("Full Signup API Response Body:");
-                System.out.println(jsonNode.toPrettyString());
-
-                // Debug: Check if `gpuid` exists at different levels
-                if (jsonNode.has("gpuid")) {
-                    this.gpuid = jsonNode.get("gpuid").asText();
-                } else if (jsonNode.has("data") && jsonNode.get("data").has("gpuid")) {
-                    this.gpuid = jsonNode.get("data").get("gpuid").asText();
-                } else if (jsonNode.has("data") && jsonNode.get("data").has("user") && jsonNode.get("data").get("user").has("gpuid")) {
-                    this.gpuid = jsonNode.get("data").get("user").get("gpuid").asText();
-                } else {
-                    System.out.println("Warning: GPUID field not found in response!");
-                    this.gpuid = null;
-                }
-
-
-                this.password = jsonNode.has("password") ? jsonNode.get("password").asText() : null;
-
-                if (this.password == null || this.gpuid == null) {
-                    System.out.println("Error: Missing password or GPUID in response!");
+                if (password == null || gpuid == null) {
                     throw new RuntimeException("Missing password or GPUID in response");
                 }
 
-                // Print extracted values
                 System.out.println("Generated Username: " + username);
                 System.out.println("Generated First Name: " + firstName);
-                System.out.println("Extracted GPUID: " + this.gpuid);
-                System.out.println("Extracted Password: " + this.password);
+                System.out.println("Generated GPUID: " + gpuid);
+                System.out.println("Generated Password: " + password);
 
-                return this.password;
+                return password;
             } catch (Exception e) {
-                System.out.println("Exception while parsing JSON response: " + e.getMessage());
                 throw new RuntimeException("Failed to parse password and gpuid", e);
             }
-        } else {
-            System.out.println("Error: Signup API request failed with status: " + response.getStatusCode());
-            System.out.println("Response Body: " + response.getBody());  // Print response for debugging
         }
         return null;
     }
 
-
-    private String extractGpuid(JsonNode jsonNode) {
-        if (jsonNode.has("gpuid")) return jsonNode.get("gpuid").asText();
-        if (jsonNode.has("data") && jsonNode.get("data").has("gpuid")) return jsonNode.get("data").get("gpuid").asText();
-        if (jsonNode.has("data") && jsonNode.get("data").has("user") && jsonNode.get("data").get("user").has("gpuid")) {
-            return jsonNode.get("data").get("user").get("gpuid").asText();
-        }
-        System.out.println("Warning: GPUID not found in response!");
-        return null;
-    }
 
     private String getAccessToken() {
         System.out.println("Executing: getAccessToken()");
@@ -171,7 +122,7 @@ public class SignUpWithReferralWithMultipleUsers {
     }
 
     public String getGpuid() {
-        return Optional.ofNullable(this.gpuid).orElse("UNKNOWN_GPUID");
+        return gpuid;
     }
 
     public ResponseEntity<String> submitUserDetails() {
@@ -193,7 +144,6 @@ public class SignUpWithReferralWithMultipleUsers {
                 "\"isGp\": true, " +
                 "\"language\": \"en\", " +
                 "\"qualification\": \"Graduate\", " +
-                "\"refferedBy\": \"" + referrer + "\", " +
                 "\"whatsAppConsent\": true " +
                 "}, \"fromLocal\": false, \"success\": false }";
 
@@ -238,79 +188,30 @@ public class SignUpWithReferralWithMultipleUsers {
         return restTemplate.exchange(USER_URL, HttpMethod.GET, entity, String.class);
     }
 
-    public List<String> getGpuidList() {
-        if (gpuids == null || gpuids.length == 0) {
-            System.out.println("Error: GPUID array is null or empty.");
-            return Collections.emptyList(); // Return an empty list instead of throwing an exception
-        }
-        return Arrays.asList(gpuids);
-    }
-
-
     public static void main(String[] args) {
         System.out.println("Executing: main()");
+        SignUpWithoutReferralSingleUser authService = new SignUpWithoutReferralSingleUser();
 
-        int numUsers = 10;
-        gpuids = new String[numUsers];
-        Arrays.fill(gpuids, "");
+        String token = authService.getToken();
+        System.out.println("Access Token: " + token);
 
-        for (int i = 0; i < numUsers; i++) {
-            int userIndex = i + 1; // Ensuring unique user number
-            try {
-                System.out.println("User " + userIndex + " is being created.");
-                SignUpWithReferralWithMultipleUsers authService = new SignUpWithReferralWithMultipleUsers();
+        ResponseEntity<String> submitDetailsResponse = authService.submitUserDetails();
+        System.out.println("Submit User Details Response: " + submitDetailsResponse.getBody());
 
-                // Step 1: Get Access Token
-                String token = authService.getToken();
-                System.out.println("User " + userIndex + " Access Token: " + token);
-                System.out.println("-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+        ResponseEntity<String> profileResponse = authService.updateUserProfile();
+        System.out.println("Update Profile Response: " + profileResponse.getBody());
 
-                // ✅ Store extracted GPUID into array
-                gpuids[i] = authService.getGpuid();
-                if (gpuids[i] == null || gpuids[i].isEmpty()) {
-                    System.out.println("Warning: GPUID for user " + userIndex + " is null or empty.");
-                    gpuids[i] = "UNKNOWN_GPUID_" + userIndex; // Assign a default value to avoid null issues
-                }
-
-                // ✅ Debugging: Print stored GPUID immediately
-                System.out.println("Stored GPUID for User " + userIndex + ": " + gpuids[i]);
-
-                // Step 2: Submit User Details
-                ResponseEntity<String> submitDetailsResponse = authService.submitUserDetails();
-                System.out.println("User " + userIndex + " Submit User Details Response: " + submitDetailsResponse.getBody());
-                System.out.println("-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
-
-                // Step 3: Update User Profile
-                ResponseEntity<String> profileResponse = authService.updateUserProfile();
-                System.out.println("User " + userIndex + " Update Profile Response: " + profileResponse.getBody());
-                System.out.println("-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
-
-                // Step 4: Wait for 5 seconds before fetching user details
-                System.out.println("User " + userIndex + " waiting for 5 seconds before fetching details...");
-                Thread.sleep(5000);  // Ensure delay is part of sequential execution
-                System.out.println("-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
-
-                // Step 5: Fetch User Details
-                ResponseEntity<String> userDetailsResponse = authService.fetchUserDetails();
-                System.out.println("User " + userIndex + " Fetch User Details Response: " + userDetailsResponse.getBody());
-                System.out.println("************************************************************************************************************************************************************************************************************************************");
-
-            } catch (Exception e) {
-                System.err.println("Error during signup for User " + userIndex + ": " + e.getMessage());
-            }
+        // Wait for 5 seconds before fetching user details
+        try {
+            System.out.println("Waiting for 5 seconds before fetching user details...");
+            Thread.sleep(5000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            System.out.println("Sleep interrupted: " + e.getMessage());
         }
 
-        // ✅ Print GPU IDs in the required format with null safety
-        System.out.println("\nAll Generated GPU IDs:");
-        System.out.print("String[] gpuidList = {");
-        for (int i = 0; i < numUsers; i++) {
-            System.out.print("\"" + (gpuids[i] != null ? gpuids[i] : "UNKNOWN_GPUID") + "\"");
-            if (i < numUsers - 1) {
-                System.out.print(", ");
-            }
-        }
-        System.out.println("};");
+        ResponseEntity<String> userDetailsResponse = authService.fetchUserDetails();
+        System.out.println("Fetch User Details Response: " + userDetailsResponse.getBody());
     }
-
 
 }
