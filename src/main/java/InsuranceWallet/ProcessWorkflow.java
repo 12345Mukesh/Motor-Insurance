@@ -20,6 +20,9 @@ public class ProcessWorkflow {
     private static String processApiUrl;
     private static JsonNode jsonConfig;
 
+    private static String gpuId = "40173"; // hardcoded gpId
+    private static final boolean USE_RANDOM_GP_ID = false; // toggle to true to use new gpId
+
     private final JdbcTemplate jdbcTemplate;
 
     public ProcessWorkflow(JdbcTemplate jdbcTemplate) {
@@ -33,7 +36,15 @@ public class ProcessWorkflow {
         loadJsonConfig();
 
         ProcessWorkflow processWorkflow = new ProcessWorkflow(jdbcTemplate);
-        processWorkflow.executeOnboarding();
+
+        if (USE_RANDOM_GP_ID) {
+            processWorkflow.executeOnboarding(gpId);
+        } else {
+            System.out.println("🧩 Skipping onboarding for hardcoded gpId: " + gpId);
+        }
+
+        processWorkflow.triggerProcessAPI(gpId);
+        processWorkflow.callBalanceAPI(gpId);
     }
 
     private static void loadJsonConfig() throws Exception {
@@ -44,17 +55,23 @@ public class ProcessWorkflow {
         baseUrl = jsonConfig.get("API_URL").asText();
         processApiUrl = baseUrl + jsonConfig.get("workflow").asText();
         leadId = jsonConfig.get("leadId").asText();
+
+        if (USE_RANDOM_GP_ID) {
+            gpId = generateRandomGpId();
+            System.out.println("🔁 Using new generated gpId: " + gpId);
+        } else {
+            gpId = gpuId;
+            System.out.println("📌 Using hardcoded gpId: " + gpId);
+        }
     }
 
-    public void executeOnboarding() throws Exception {
-        ResponseEntity<String> response = onboardGP();
+    public void executeOnboarding(String gpId) throws Exception {
+        ResponseEntity<String> response = onboardGP(gpId);
         System.out.println("Full API response: " + response.getBody());
-
         validateGPDatabaseEntries(gpId);
-        triggerProcessAPI();
     }
 
-    public ResponseEntity<String> onboardGP() throws Exception {
+    public ResponseEntity<String> onboardGP(String gpId) throws Exception {
         String gpEndpoint = jsonConfig.get("gp_Account").asText();
         boolean isPosp = jsonConfig.get("isPosp").asBoolean();
 
@@ -63,7 +80,6 @@ public class ProcessWorkflow {
         }
 
         String apiUrl = baseUrl + gpEndpoint;
-        gpId = generateRandomGpId();
 
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("gpId", gpId);
@@ -75,8 +91,8 @@ public class ProcessWorkflow {
 
         requestBody = filterGPKeys(requestBody);
 
-        System.out.println("Generated gpId: " + gpId);
-        System.out.println("API URL: " + apiUrl);
+        System.out.println("📤 Sending onboarding request for gpId: " + gpId);
+        System.out.println("🔗 API URL: " + apiUrl);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -103,7 +119,6 @@ public class ProcessWorkflow {
 
     public void validateGPDatabaseEntries(String gpId) {
         String query = "SELECT account_id AS account_id, account_type_id AS account_type_id, account_owner_id AS account_owner_id FROM accounts WHERE account_id LIKE ?";
-
         List<Map<String, Object>> accountRecords = jdbcTemplate.queryForList(query, "%" + gpId);
 
         if (accountRecords.isEmpty()) {
@@ -132,9 +147,10 @@ public class ProcessWorkflow {
         }
     }
 
-    public void triggerProcessAPI() throws Exception {
+    public void triggerProcessAPI(String gpId) throws Exception {
         if (globalGpGbWallet == null || globalGpGbWallet.isEmpty()) {
-            throw new IllegalStateException("❌ Error: GP General Balance Wallet ID not found for processing.");
+            globalGpGbWallet = "gp_gb_wallet_" + gpId;
+            System.out.println("⚠️ Using fallback GP GB Wallet: " + globalGpGbWallet);
         }
 
         String eventType = jsonConfig.get("eventType").asText();
@@ -146,7 +162,7 @@ public class ProcessWorkflow {
         String insurer = jsonConfig.get("insurer").asText();
         String category = jsonConfig.get("category").asText();
 
-        String lead = leadId+generateRandomGpId();
+        String lead = leadId + generateRandomGpId();
 
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("eventType", eventType);
@@ -168,7 +184,7 @@ public class ProcessWorkflow {
         payload.put("eventDetails", eventDetails);
         requestBody.put("payload", payload);
 
-        System.out.println("Triggering Process API with payload: " + requestBody);
+        System.out.println("🚀 Triggering Process API with payload: " + requestBody);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -177,93 +193,95 @@ public class ProcessWorkflow {
         RestTemplate restTemplate = new RestTemplate();
 
         ResponseEntity<String> response = restTemplate.exchange(processApiUrl, HttpMethod.POST, requestEntity, String.class);
+        System.out.println("📝 Process API Response: " + response.getBody());
 
-        System.out.println("Process API Response: " + response.getBody());
+        // 🔍 Debug block: Check if transactions are present before validation
+        System.out.println("🔍 Checking raw transactions for account: gp_gb_wallet_" + gpId);
+        String checkQuery = "SELECT * FROM insurance_wallet.transaction WHERE account_id = ?";
+        List<Map<String, Object>> debugTransactions = jdbcTemplate.queryForList(checkQuery, "gp_gb_wallet_" + gpId);
 
-        int totalTransactionBalance = validateTransactions(payoutAmount); // ✅ Capture total balance
-        validatePayoutTransaction(payoutAmount, totalTransactionBalance); // ✅ Pass it for validation
+        if (debugTransactions.isEmpty()) {
+            System.out.println("❌ No transaction rows found for gp_gb_wallet_" + gpId);
+        } else {
+            System.out.println("📊 Transactions found:");
+            debugTransactions.forEach(System.out::println);
+        }
 
+        // Proceed with validations
+        int totalTransactionBalance = validateTransactions(gpId, payoutAmount);
+        validatePayoutTransaction(gpId, payoutAmount, totalTransactionBalance);
     }
 
-    public void validatePayoutTransaction(int payoutAmount, int totalTransactionBalance) {
-        String merchantAccountId = "merchant_gromo_gromo-insure_general_bank_200012";
+
+    public void validatePayoutTransaction(String gpId, int payoutAmount, int totalTransactionBalance) {
+        String merchantAccountId = "merchant_gromo_gromo-insure_4w_bank_11999051";
         String gpGbWalletAccountId = "gp_gb_wallet_" + gpId;
 
-        System.out.println("✅ Payout validation successful: " + payoutAmount + " deducted from " + merchantAccountId + " and credited to " + gpGbWalletAccountId);
+        System.out.println("✅ Payout validation successful: " + payoutAmount + " transferred to " + gpGbWalletAccountId);
 
-        String gpGbWalletBalanceQuery = "SELECT balance_in_same_currency FROM accounts WHERE account_id = ?";
-//        System.out.println("🔹 Querying balance for GP_GB_Wallet ID: " + gpGbWalletAccountId);
-
-        Double gpGbWalletBalance = jdbcTemplate.queryForObject(gpGbWalletBalanceQuery, Double.class, new Object[]{gpGbWalletAccountId});
-
-        String merchantBalanceQuery = "SELECT balance_in_same_currency FROM accounts WHERE account_id = ?";
-        System.out.println("✅ Fetching Merchant Balance from accounts table: ");
-        System.out.println("🔹 Querying balance for Merchant Account ID: " + merchantAccountId);
-
-        Double merchantBalance = jdbcTemplate.queryForObject(merchantBalanceQuery, Double.class, new Object[]{merchantAccountId});
+        Double merchantBalance = jdbcTemplate.queryForObject(
+                "SELECT balance_in_same_currency FROM accounts WHERE account_id = ?",
+                Double.class, merchantAccountId
+        );
 
         if (merchantBalance == null) {
             System.out.println("❌ Error: Merchant balance is NULL! Check if account exists.");
-        } else if (Math.abs(merchantBalance) == Math.abs(totalTransactionBalance)) {  // ✅ Match ignoring sign
+        } else if (Math.abs(merchantBalance) == Math.abs(totalTransactionBalance)) {
             System.out.println("✅ Total Merchant Balance Matches: " + merchantBalance);
         } else {
-            System.out.println("❌ Error: Mismatch in total merchant balance. Expected: " + totalTransactionBalance + ", Found: " + merchantBalance);
+            System.out.println("❌ Mismatch in total merchant balance. Expected: " + totalTransactionBalance + ", Found: " + merchantBalance);
         }
     }
 
-
-    public int validateTransactions(int expectedPayoutAmount) {
+    public int validateTransactions(String gpId, int expectedPayoutAmount) {
         String expectedGpGbWalletId = "gp_gb_wallet_" + gpId;
-        String transactionQuery = "SELECT t1.transaction_id, t1.account_id AS debited_account, " + // ✅ Fetch debited account
+        String query = "SELECT t1.transaction_id, t1.account_id AS debited_account, " +
                 "t2.account_id AS credited_account, t1.transaction_amount, t1.created_date " +
                 "FROM insurance_wallet.transaction t1 " +
                 "JOIN insurance_wallet.transaction t2 " +
                 "ON t1.transaction_id = t2.transaction_id " +
                 "WHERE t1.account_id = ? AND t1.transaction_type = 'debit' AND t2.transaction_type = 'credit'";
 
-        System.out.println("🔹 Fetching transactions for Merchant Account ID: merchant_gromo_gromo-insure_general_bank_200012");
+        List<Map<String, Object>> transactions = jdbcTemplate.queryForList(query, "merchant_gromo_gromo-insure_4w_bank_11999051");
 
-        List<Map<String, Object>> transactions = jdbcTemplate.queryForList(transactionQuery, "merchant_gromo_gromo-insure_general_bank_200012");
+        int totalBalance = 0;
+        boolean matchFound = false;
 
-        if (transactions.isEmpty()) {
-            throw new IllegalStateException("❌ Error: No transactions found for the merchant account.");
-        }
+        for (Map<String, Object> tx : transactions) {
+            String creditedAccount = (String) tx.get("credited_account");
+            int amount = ((Number) tx.get("transaction_amount")).intValue();
+            totalBalance += amount;
 
-        boolean isValidTransaction = false;
-        int totalBalance = 0;  // ✅ Store total transaction amount
-
-        for (Map<String, Object> transaction : transactions) {
-            String transactionId = (String) transaction.get("transaction_id");
-            String debitedAccount = (String) transaction.get("debited_account"); // ✅ Now fetched correctly
-            String creditedAccount = (String) transaction.get("credited_account");
-            int transactionAmount = ((Number) transaction.get("transaction_amount")).intValue();
-
-            totalBalance += transactionAmount; // ✅ Add amount to total balance
-
-            System.out.println("🔹 Checking Transaction ID: " + transactionId +
-                    " | Debited Account: " + debitedAccount +
-                    " | Credited Account: " + creditedAccount +
-                    " | Amount: " + transactionAmount);
-
-            if (creditedAccount.equals(expectedGpGbWalletId) && transactionAmount == expectedPayoutAmount) {
-                isValidTransaction = true;
+            if (creditedAccount.equals(expectedGpGbWalletId) && amount == expectedPayoutAmount) {
+                matchFound = true;
             }
         }
 
-        System.out.println("💰 Total Balance of All Transactions of merchant_gromo_gromo-insure_general_bank_200012: " + totalBalance);
-
-        if (!isValidTransaction) {
-            throw new IllegalStateException("❌ Error: No matching transaction found for GP GB Wallet: " + expectedGpGbWalletId +
-                    " with amount: " + expectedPayoutAmount);
+        if (!matchFound) {
+            throw new IllegalStateException("❌ No matching transaction found for wallet " + expectedGpGbWalletId);
         }
 
-        System.out.println("🔹 Latest GP GB Wallet Account Created: " + expectedGpGbWalletId);
-        System.out.println("✅ Validation successful: Payout matches the expected GP_GB_Wallet account: " + expectedGpGbWalletId);
-
-        return totalBalance;  // ✅ Return total balance
+        System.out.println("✅ Transactions validated for wallet: " + expectedGpGbWalletId);
+        return totalBalance;
     }
 
+    public void callBalanceAPI(String gpId) {
+        if (gpId == null || gpId.isEmpty()) {
+            throw new IllegalStateException("❌ Error: gpId is null or not initialized.");
+        }
 
+        String balanceEndpoint = jsonConfig.get("getbalance").asText();
+        String url = baseUrl + balanceEndpoint + gpId;
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<String> entity = new HttpEntity<>(headers);
+        RestTemplate restTemplate = new RestTemplate();
+
+        ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+
+        System.out.println("📦 Balance API Response for gpId " + gpId + ":");
+        System.out.println(response.getBody());
+    }
 }
-
-

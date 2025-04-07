@@ -4,6 +4,7 @@
   "token": "Basic ZWU2ZmRjODktMDdjYy00ZGMzLWFmNTMtZWY5YTRkZDc4ZTg2OmE1NmIzZWI4LWU3ZmMtNDcwOC05NDI5LWRjNzlhYjIzMTVmNw==",
   "idempotencyKey": "RMIPM_GI-715452835685_2023_13",
   "submit": "submit",
+  "get": "get-by-idempotency-key/",
   "cancel": "cancel",
   "saleThreshold" : 5000
 }

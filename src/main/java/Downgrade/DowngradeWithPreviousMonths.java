@@ -6,34 +6,36 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.*;
 import org.springframework.web.client.RestTemplate;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.InputStream;
 import java.sql.*;
 import java.time.*;
 import java.time.temporal.TemporalAdjusters;
 import java.util.*;
+import java.util.stream.IntStream;
 
-public class Downgrade {
+public class DowngradeWithPreviousMonths {
 
     private String stagingDbUrl;
     private String stagingDbUser;
     private String stagingDbPass;
 
-    private static String gpuid = "OJKI9316";
+    private static final String gpuid = "ZMJU3829";
+    private static final int monthsBefore = 1; // Change this to 1 or 2 based on requirement
 
     public static void main(String[] args) {
         try {
-            new Downgrade().process();
+            new DowngradeWithPreviousMonths().process();
         } catch (Exception e) {
-            System.out.println("❌ Unhandled Error in main:");
+            System.out.println("\u274C Unhandled Error in main:");
             e.printStackTrace();
         }
     }
 
     public void process() throws Exception {
-        System.out.println("🚀 Starting Downgrade process...");
+        System.out.println("\uD83D\uDE80 Starting Downgrade process...");
         loadDBConfig();
 
-        System.out.println("🔍 Reading downgrade.json...");
         ObjectMapper mapper = new ObjectMapper();
         InputStream inputStream = new ClassPathResource("downgrade.json").getInputStream();
         JsonNode config = mapper.readTree(inputStream);
@@ -46,56 +48,48 @@ public class Downgrade {
         int threshold = config.get("saleThreshold").asInt();
 
         String idempotencyKey = "gab_downgrade_" + gpuid;
-
         callSubmitAPI(baseUrl + submitPath, token);
 
-        // 🔁 Compute triggerDate = 10th of month, 3 months from CURRENT month
         LocalDate today = LocalDate.now();
-        LocalDate threeMonthsLater = today.withDayOfMonth(10).plusMonths(3);
-        LocalDate triggerDate = threeMonthsLater.withDayOfMonth(10);
 
-        System.out.println("⏳ Starting trigger date calculation from: " + triggerDate);
+        // Dynamic window start and end based on monthsBefore
+        LocalDate windowStart = today.minusMonths(monthsBefore).withDayOfMonth(1);
+        LocalDate windowEnd = windowStart.plusMonths(2).with(TemporalAdjusters.lastDayOfMonth());
+        LocalDate triggerDate = windowEnd.plusMonths(1).withDayOfMonth(10);
 
-        boolean finalThresholdNotMet = false;
+        System.out.println("\uD83D\uDD14 Initial Trigger Date: " + triggerDate);
 
         while (true) {
-            // 📅 Window: from 1st of 3 months before triggerDate to last day of month 1 month before triggerDate
-            LocalDate windowStart = triggerDate.minusMonths(3).withDayOfMonth(1);
-            LocalDate windowEnd = triggerDate.minusMonths(1).with(TemporalAdjusters.lastDayOfMonth());
+            System.out.println("\n\uD83D\uDCC6 Evaluation Window: " + windowStart + " to " + windowEnd);
+            double windowTotal = queryWalletDataForWindow(windowStart, windowEnd);
+            System.out.println("\uD83D\uDCB0 Total Amount from Wallet Transactions: ₹" + windowTotal);
+            printTransactions(windowStart, windowEnd);
 
-            System.out.println("📆 Evaluating window: " + windowStart + " to " + windowEnd);
-
-            double[] windowTotals = queryWalletDataForWindow(windowStart, windowEnd);
-            double monthlyTotal = windowTotals[0];
-
-            System.out.println("💰 Window Total: ₹" + monthlyTotal);
-
-            if (monthlyTotal >= threshold) {
-                System.out.println("🛑 Threshold met, calling Cancel API before continuing...");
+            if (windowTotal >= threshold) {
+                System.out.println("\uD83D\uDEAB Threshold met. Calling Cancel API...");
                 callCancelAPI(baseUrl, token, cancelPath, idempotencyKey);
+
                 // 🔁 Immediately resubmit
                 callSubmitAPI(baseUrl + submitPath, token);
-                System.out.println("🧮 Rechecking threshold after cancel...");
-                triggerDate = triggerDate.plusMonths(1);
-                System.out.println("➡️ Moving to next trigger date: " + triggerDate);
+
+                // Shift window forward
+                windowStart = windowStart.plusMonths(1);
+                windowEnd = windowEnd.plusMonths(1);
+                triggerDate = windowEnd.plusMonths(1).withDayOfMonth(10);
+
+                System.out.println("\uD83D\uDD14 Next Trigger Date: " + triggerDate);
             } else {
-                System.out.println("✅ Threshold not met. Final trigger date: " + triggerDate);
-                printTransactions(windowStart, windowEnd);
-                finalThresholdNotMet = true;
+                System.out.println("\u2705 Threshold not met. Proceeding with downgrade.");
                 break;
             }
         }
 
-        if (finalThresholdNotMet) {
-            System.out.println("🔎 Final check: calling GET API since last window did not meet threshold...");
-            callGetAPI(baseUrl, token, getPath);
-        }
+        System.out.println("\uD83D\uDD14 Final Trigger Date: " + triggerDate);
+        callGetAPI(baseUrl, token, getPath);
     }
 
-
-    private double[] queryWalletDataForWindow(LocalDate startDate, LocalDate endDate) {
+    private double queryWalletDataForWindow(LocalDate startDate, LocalDate endDate) {
         double sum = 0;
-
         try (Connection conn = DriverManager.getConnection(stagingDbUrl, stagingDbUser, stagingDbPass)) {
             String query = "SELECT wallet_unique_id FROM wallet_master WHERE gpUId = ?";
             try (PreparedStatement ps = conn.prepareStatement(query)) {
@@ -110,37 +104,29 @@ public class Downgrade {
                 }
             }
         } catch (Exception e) {
-            System.out.println("❌ Error querying window: " + e.getMessage());
+            System.out.println("\u274C Error querying wallet data: " + e.getMessage());
         }
-
-        return new double[]{sum};
+        return sum;
     }
 
-    private double queryWalletTransactionsInWindow(Connection conn, String walletUniqueId, LocalDate start, LocalDate end) throws SQLException {
+    private double queryWalletTransactionsInWindow(Connection conn, String walletId, LocalDate start, LocalDate end) throws SQLException {
         double total = 0;
-
-        String txQuery = "SELECT transaction_amount FROM wallet_transactions " +
-                "WHERE source_wallet_id = ? AND transaction_direction = 'in' " +
-                "AND transaction_date BETWEEN ? AND ?";
-
-        try (PreparedStatement ps = conn.prepareStatement(txQuery)) {
-            ps.setString(1, walletUniqueId);
+        String query = "SELECT transaction_amount FROM wallet_transactions WHERE source_wallet_id = ? AND transaction_direction = 'in' AND transaction_date BETWEEN ? AND ?";
+        try (PreparedStatement ps = conn.prepareStatement(query)) {
+            ps.setString(1, walletId);
             ps.setTimestamp(2, Timestamp.valueOf(start.atStartOfDay()));
             ps.setTimestamp(3, Timestamp.valueOf(end.atTime(LocalTime.MAX)));
-
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     total += rs.getDouble("transaction_amount");
                 }
             }
         }
-
         return total;
     }
 
     private void printTransactions(LocalDate start, LocalDate end) {
-        System.out.println("📋 Transactions between " + start + " and " + end + ":");
-
+        System.out.println("\uD83D\uDCCB Transactions from " + start + " to " + end + ":");
         try (Connection conn = DriverManager.getConnection(stagingDbUrl, stagingDbUser, stagingDbPass)) {
             String walletQuery = "SELECT wallet_unique_id FROM wallet_master WHERE gpUId = ?";
             try (PreparedStatement walletStmt = conn.prepareStatement(walletQuery)) {
@@ -150,10 +136,7 @@ public class Downgrade {
                         String walletId = walletRs.getString("wallet_unique_id");
                         if (walletId.startsWith("SC_")) continue;
 
-                        String txQuery = "SELECT * FROM wallet_transactions " +
-                                "WHERE source_wallet_id = ? AND transaction_direction = 'in' " +
-                                "AND transaction_date BETWEEN ? AND ?";
-
+                        String txQuery = "SELECT * FROM wallet_transactions WHERE source_wallet_id = ? AND transaction_direction = 'in' AND transaction_date BETWEEN ? AND ?";
                         try (PreparedStatement txStmt = conn.prepareStatement(txQuery)) {
                             txStmt.setString(1, walletId);
                             txStmt.setTimestamp(2, Timestamp.valueOf(start.atStartOfDay()));
@@ -161,13 +144,18 @@ public class Downgrade {
 
                             try (ResultSet txRs = txStmt.executeQuery()) {
                                 ResultSetMetaData rsmd = txRs.getMetaData();
-                                int columnCount = rsmd.getColumnCount();
+                                int colCount = rsmd.getColumnCount();
                                 while (txRs.next()) {
-                                    StringBuilder sb = new StringBuilder();
-                                    for (int i = 1; i <= columnCount; i++) {
-                                        sb.append(rsmd.getColumnName(i)).append(": ").append(txRs.getString(i)).append("\t");
-                                    }
-                                    System.out.println(sb);
+                                    IntStream.rangeClosed(1, colCount)
+                                            .mapToObj(i -> {
+                                                try {
+                                                    return txRs.getString(i);
+                                                } catch (SQLException e) {
+                                                    return "ERROR";
+                                                }
+                                            })
+                                            .forEach(val -> System.out.print(val + "\t"));
+                                    System.out.println();
                                 }
                             }
                         }
@@ -175,7 +163,7 @@ public class Downgrade {
                 }
             }
         } catch (Exception e) {
-            System.out.println("❌ Error printing transactions: " + e.getMessage());
+            System.out.println("\u274C Error printing transactions: " + e.getMessage());
         }
     }
 
@@ -273,4 +261,5 @@ public class Downgrade {
             throw new RuntimeException("❌ Failed to load DB config", e);
         }
     }
+
 }
