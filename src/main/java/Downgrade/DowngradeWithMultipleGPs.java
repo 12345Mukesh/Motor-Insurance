@@ -9,31 +9,49 @@ import org.springframework.web.client.RestTemplate;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.*;
-import java.time.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.temporal.TemporalAdjusters;
 import java.util.*;
-import java.util.stream.IntStream;
 
-public class Downgrade {
+public class DowngradeWithMultipleGPs {
 
     private String stagingDbUrl;
     private String stagingDbUser;
     private String stagingDbPass;
 
-    private static final String gpuid = "74NF6087";
+    private String gpuid;
+    private int monthsBefore;
+    private LocalDate createdAt;
 
     public static void main(String[] args) {
-        try {
-            new Downgrade().process();
-        } catch (Exception e) {
-            System.out.println("\u274C Unhandled Error in main:");
-            e.printStackTrace();
+        List<String> gpuids = List.of("MJ3A0908", "WU3N6709", "NN9Q1118", "4EXA9868", "HC9E3636", "YJ7G2429");
+
+        DowngradeWithMultipleGPs processor = new DowngradeWithMultipleGPs();
+
+        for (String id : gpuids) {
+            try {
+                System.out.println("\n==============================");
+                System.out.println("⚙️  Processing GP: " + id);
+                System.out.println("==============================\n");
+                processor.setGpuid(id);
+                processor.process();
+            } catch (Exception e) {
+                System.out.println("❌ Error processing gpuid " + id);
+                e.printStackTrace();
+            }
         }
     }
 
+    public void setGpuid(String gpuid) {
+        this.gpuid = gpuid;
+    }
+
     public void process() throws Exception {
-        System.out.println("🚀 Starting Downgrade process...");
+        System.out.println("🚀 Starting Downgrade process for: " + gpuid);
         loadDBConfig();
+
+        monthsBefore = calculateMonthsBeforeFromCreatedAt(); // Sets createdAt
 
         ObjectMapper mapper = new ObjectMapper();
         InputStream inputStream = new ClassPathResource("downgrade.json").getInputStream();
@@ -47,164 +65,138 @@ public class Downgrade {
         int threshold = config.get("saleThreshold").asInt();
 
         String idempotencyKey = "gab_downgrade_" + gpuid;
-
-        LocalDate createdAt = fetchCreatedAtFromWalletMaster();
-        if (createdAt == null) {
-            System.out.println("❌ Created_at not found for gpuid: " + gpuid);
-            return;
-        }
-
-        LocalDate windowStart = createdAt.withDayOfMonth(1);
-        LocalDate today = LocalDate.now();
-        LocalDate finalTriggerDate = windowStart.plusMonths(3).withDayOfMonth(10); // Initial trigger
-
-        System.out.println("📆 Downgrade will evaluate activity in: " +
-                windowStart.getMonth() + " " + windowStart.getYear() + ", " +
-                windowStart.plusMonths(1).getMonth() + " " + windowStart.plusMonths(1).getYear() + ", " +
-                windowStart.plusMonths(2).getMonth() + " " + windowStart.plusMonths(2).getYear());
-
-        System.out.println("🔔 Initial Trigger Date: " + finalTriggerDate);
-        System.out.println("🧾 Created At: " + createdAt);
-
-        // Initial submit
         callSubmitAPI(baseUrl + submitPath, token);
 
-        while (true) {
-            LocalDate evalStart = windowStart;
-            LocalDate evalEnd = windowStart.plusMonths(2).with(TemporalAdjusters.lastDayOfMonth());
+        LocalDate today = LocalDate.now();
+        int currentMonth = today.getMonthValue();
+        int createdMonth = createdAt.getMonthValue();
 
-            // If current month is in window, cap at today
-            if (evalEnd.getYear() == today.getYear() && evalEnd.getMonth() == today.getMonth()) {
-                evalEnd = today;
+        LocalDate windowStart = today.minusMonths(monthsBefore).withDayOfMonth(1);
+        LocalDate windowEnd = windowStart.plusMonths(2).with(TemporalAdjusters.lastDayOfMonth());
+        LocalDate triggerDate = windowEnd.plusMonths(1).withDayOfMonth(10);
+
+        System.out.println("🔔 Initial Trigger Date: " + triggerDate);
+
+        LocalDate updatedAt = getUpdatedAtFromWalletMaster(); // ✅ new
+
+        int loop = 0;
+        while (true) {
+            System.out.println("\n📅 Evaluation Window: " + windowStart + " to " + windowEnd);
+            if (updatedAt.isBefore(windowStart)) {
+                System.out.println("🛑 updated_at is before the evaluation window. Stopping loop.");
+                break;
             }
 
-            System.out.println("\n📆 Evaluation Window: " + evalStart + " to " + evalEnd);
-            double windowTotal = queryWalletDataForWindow(evalStart, evalEnd);
-            System.out.println("💰 Total Amount from Wallet Transactions: ₹" + windowTotal);
-            printTransactions(evalStart, evalEnd);
+            if (updatedAt.isAfter(windowEnd)) {
+                System.out.println("🛑 updated_at is after evaluation window end. Stopping loop.");
+                break;
+            }
 
-            if (windowTotal >= threshold) {
+            double currentBalanceSum = getCurrentBalanceFromWalletMaster();
+            System.out.println("💰 Total Current Balance from Wallet Master: ₹" + currentBalanceSum);
+
+            if (loop > 0 && createdMonth == currentMonth && windowStart.getMonthValue() > currentMonth) {
+                System.out.println("🛑 Evaluation window crosses current month. Stopping loop and calling GET API.");
+                break;
+            }
+
+            if (currentBalanceSum >= threshold) {
                 System.out.println("🚫 Threshold met. Calling Cancel API...");
                 callCancelAPI(baseUrl, token, cancelPath, idempotencyKey);
-
-                callSubmitAPI(baseUrl + submitPath, token); // 🔁 Resubmit
+                callSubmitAPI(baseUrl + submitPath, token);
 
                 windowStart = windowStart.plusMonths(1);
-                finalTriggerDate = windowStart.plusMonths(3).withDayOfMonth(10);
-                System.out.println("🔔 Next Trigger Date: " + finalTriggerDate);
-
-                // Stop if current month is now outside 3-month window
-                if (windowStart.plusMonths(2).isAfter(today)) {
-                    System.out.println("📅 Reached current month. Next window will exceed today.");
-                    break;
-                }
+                windowEnd = windowEnd.plusMonths(1);
+                triggerDate = windowEnd.plusMonths(1).withDayOfMonth(10);
+                System.out.println("🔔 Next Trigger Date: " + triggerDate);
             } else {
                 System.out.println("✅ Threshold not met. Proceeding with downgrade.");
                 break;
             }
+
+            loop++;
         }
 
-        System.out.println("🔔 Final Trigger Date: " + finalTriggerDate);
+        System.out.println("🔔 Final Trigger Date: " + triggerDate);
         callGetAPI(baseUrl, token, getPath);
     }
 
+    private int calculateMonthsBeforeFromCreatedAt() {
+        try (Connection conn = DriverManager.getConnection(stagingDbUrl, stagingDbUser, stagingDbPass)) {
+            String query = "SELECT created_at FROM wallet_master WHERE gpUId = ? LIMIT 1";
+            try (PreparedStatement ps = conn.prepareStatement(query)) {
+                ps.setString(1, gpuid);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        Timestamp createdAtTimestamp = rs.getTimestamp("created_at");
+                        if (createdAtTimestamp == null) {
+                            throw new RuntimeException("❌ created_at is null for gpuid: " + gpuid);
+                        }
 
+                        createdAt = createdAtTimestamp.toLocalDateTime().toLocalDate();
+                        int createdMonth = createdAt.getMonthValue();
+                        int currentMonth = LocalDate.now().getMonthValue();
+                        int diff = currentMonth - createdMonth;
+                        if (diff < 0) diff += 12;
 
-    private LocalDate fetchCreatedAtFromWalletMaster() {
-        String query = "SELECT created_at FROM wallet_master WHERE gpUId = ?";
-        try (Connection conn = DriverManager.getConnection(stagingDbUrl, stagingDbUser, stagingDbPass);
-             PreparedStatement ps = conn.prepareStatement(query)) {
-            ps.setString(1, gpuid);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    Timestamp createdAt = rs.getTimestamp("created_at");
-                    return createdAt.toLocalDateTime().toLocalDate();
+                        System.out.println("🗓️ Created At: " + createdAt);
+                        System.out.println("📆 Created Month: " + createdMonth);
+                        System.out.println("📆 Current Month: " + currentMonth);
+                        System.out.println("📊 Calculated monthsBefore: " + diff);
+
+                        return diff;
+                    } else {
+                        throw new RuntimeException("❌ No wallet_master record found for gpuid: " + gpuid);
+                    }
                 }
             }
-        } catch (SQLException e) {
-            System.out.println("❌ Error fetching created_at: " + e.getMessage());
+        } catch (Exception e) {
+            throw new RuntimeException("❌ Error calculating monthsBefore for gpuid: " + gpuid, e);
         }
-        return null;
     }
 
+    private LocalDate getUpdatedAtFromWalletMaster() {
+        try (Connection conn = DriverManager.getConnection(stagingDbUrl, stagingDbUser, stagingDbPass)) {
+            String query = "SELECT updated_at FROM wallet_master WHERE gpUId = ? ORDER BY updated_at DESC LIMIT 1";
+            try (PreparedStatement ps = conn.prepareStatement(query)) {
+                ps.setString(1, gpuid);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        Timestamp updatedAtTs = rs.getTimestamp("updated_at");
+                        if (updatedAtTs == null) {
+                            throw new RuntimeException("❌ updated_at is null for gpuid: " + gpuid);
+                        }
+                        LocalDate updatedAt = updatedAtTs.toLocalDateTime().toLocalDate();
+                        System.out.println("🕒 Latest Updated At: " + updatedAt);
+                        return updatedAt;
+                    } else {
+                        throw new RuntimeException("❌ No updated_at found for gpuid: " + gpuid);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("❌ Error fetching updated_at for gpuid: " + gpuid, e);
+        }
+    }
 
-    private double queryWalletDataForWindow(LocalDate startDate, LocalDate endDate) {
+    private double getCurrentBalanceFromWalletMaster() {
         double sum = 0;
         try (Connection conn = DriverManager.getConnection(stagingDbUrl, stagingDbUser, stagingDbPass)) {
-            String query = "SELECT wallet_unique_id FROM wallet_master WHERE gpUId = ?";
+            String query = "SELECT current_balance, wallet_unique_id FROM wallet_master WHERE gpUId = ?";
             try (PreparedStatement ps = conn.prepareStatement(query)) {
                 ps.setString(1, gpuid);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
-                        String walletUniqueId = rs.getString("wallet_unique_id");
-                        if (walletUniqueId.startsWith("SC_")) continue;
-                        double walletTotal = queryWalletTransactionsInWindow(conn, walletUniqueId, startDate, endDate);
-                        sum += walletTotal;
+                        String walletId = rs.getString("wallet_unique_id");
+                        if (walletId.startsWith("SC_")) continue;
+                        sum += rs.getDouble("current_balance");
                     }
                 }
             }
         } catch (Exception e) {
-            System.out.println("\u274C Error querying wallet data: " + e.getMessage());
+            System.out.println("❌ Error fetching current balance: " + e.getMessage());
         }
         return sum;
-    }
-
-    private double queryWalletTransactionsInWindow(Connection conn, String walletId, LocalDate start, LocalDate end) throws SQLException {
-        double total = 0;
-        String query = "SELECT transaction_amount FROM wallet_transactions WHERE source_wallet_id = ? AND transaction_direction = 'in' AND transaction_date BETWEEN ? AND ?";
-        try (PreparedStatement ps = conn.prepareStatement(query)) {
-            ps.setString(1, walletId);
-            ps.setTimestamp(2, Timestamp.valueOf(start.atStartOfDay()));
-            ps.setTimestamp(3, Timestamp.valueOf(end.atTime(LocalTime.MAX)));
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    total += rs.getDouble("transaction_amount");
-                }
-            }
-        }
-        return total;
-    }
-
-    private void printTransactions(LocalDate start, LocalDate end) {
-        System.out.println("\uD83D\uDCCB Transactions from " + start + " to " + end + ":");
-        try (Connection conn = DriverManager.getConnection(stagingDbUrl, stagingDbUser, stagingDbPass)) {
-            String walletQuery = "SELECT wallet_unique_id FROM wallet_master WHERE gpUId = ?";
-            try (PreparedStatement walletStmt = conn.prepareStatement(walletQuery)) {
-                walletStmt.setString(1, gpuid);
-                try (ResultSet walletRs = walletStmt.executeQuery()) {
-                    while (walletRs.next()) {
-                        String walletId = walletRs.getString("wallet_unique_id");
-                        if (walletId.startsWith("SC_")) continue;
-
-                        String txQuery = "SELECT * FROM wallet_transactions WHERE source_wallet_id = ? AND transaction_direction = 'in' AND transaction_date BETWEEN ? AND ?";
-                        try (PreparedStatement txStmt = conn.prepareStatement(txQuery)) {
-                            txStmt.setString(1, walletId);
-                            txStmt.setTimestamp(2, Timestamp.valueOf(start.atStartOfDay()));
-                            txStmt.setTimestamp(3, Timestamp.valueOf(end.atTime(LocalTime.MAX)));
-
-                            try (ResultSet txRs = txStmt.executeQuery()) {
-                                ResultSetMetaData rsmd = txRs.getMetaData();
-                                int colCount = rsmd.getColumnCount();
-                                while (txRs.next()) {
-                                    IntStream.rangeClosed(1, colCount)
-                                            .mapToObj(i -> {
-                                                try {
-                                                    return txRs.getString(i);
-                                                } catch (SQLException e) {
-                                                    return "ERROR";
-                                                }
-                                            })
-                                            .forEach(val -> System.out.print(val + "\t"));
-                                    System.out.println();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            System.out.println("\u274C Error printing transactions: " + e.getMessage());
-        }
     }
 
     private void callSubmitAPI(String url, String token) {
@@ -301,5 +293,4 @@ public class Downgrade {
             throw new RuntimeException("❌ Failed to load DB config", e);
         }
     }
-
 }

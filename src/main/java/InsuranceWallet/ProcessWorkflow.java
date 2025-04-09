@@ -20,8 +20,10 @@ public class ProcessWorkflow {
     private static String processApiUrl;
     private static JsonNode jsonConfig;
 
-    private static String gpuId = "40173"; // hardcoded gpId
+    private static String gpuId = "40913"; // hardcoded gpId
     private static final boolean USE_RANDOM_GP_ID = false; // toggle to true to use new gpId
+
+   public static String merchantAccountId = "merchant_gromo_gromo-insure_4w_bank_11999033";
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -208,62 +210,99 @@ public class ProcessWorkflow {
         }
 
         // Proceed with validations
-        int totalTransactionBalance = validateTransactions(gpId, payoutAmount);
-        validatePayoutTransaction(gpId, payoutAmount, totalTransactionBalance);
+//        int totalTransactionBalance = validateTransactions(gpId, payoutAmount);
+        validateTransactions(gpId, payoutAmount);
     }
 
+    private void prettyPrintTransaction(Map<String, Object> tx) {
+        System.out.println(tx);
+    }
 
-    public void validatePayoutTransaction(String gpId, int payoutAmount, int totalTransactionBalance) {
-        String merchantAccountId = "merchant_gromo_gromo-insure_4w_bank_11999051";
-        String gpGbWalletAccountId = "gp_gb_wallet_" + gpId;
-
-        System.out.println("✅ Payout validation successful: " + payoutAmount + " transferred to " + gpGbWalletAccountId);
-
-        Double merchantBalance = jdbcTemplate.queryForObject(
-                "SELECT balance_in_same_currency FROM accounts WHERE account_id = ?",
-                Double.class, merchantAccountId
-        );
-
-        if (merchantBalance == null) {
-            System.out.println("❌ Error: Merchant balance is NULL! Check if account exists.");
-        } else if (Math.abs(merchantBalance) == Math.abs(totalTransactionBalance)) {
-            System.out.println("✅ Total Merchant Balance Matches: " + merchantBalance);
-        } else {
-            System.out.println("❌ Mismatch in total merchant balance. Expected: " + totalTransactionBalance + ", Found: " + merchantBalance);
-        }
+    private void printEssentialFields(String label, Map<String, Object> tx) {
+        System.out.println("[" + label + "]");
+        System.out.println("Txn ID        : " + tx.get("transaction_id"));
+        System.out.println("Account ID    : " + tx.get("account_id"));
+        System.out.println("Merchant Txn  : " + tx.get("merchant_transaction_id"));
+        System.out.println("Amount        : " + tx.get("transaction_amount"));
+        System.out.println("Type          : " + tx.get("transaction_type"));
+        System.out.println("Status        : " + tx.get("status"));
+        System.out.println("Created Date  : " + tx.get("created_date"));
     }
 
     public int validateTransactions(String gpId, int expectedPayoutAmount) {
-        String expectedGpGbWalletId = "gp_gb_wallet_" + gpId;
-        String query = "SELECT t1.transaction_id, t1.account_id AS debited_account, " +
-                "t2.account_id AS credited_account, t1.transaction_amount, t1.created_date " +
-                "FROM insurance_wallet.transaction t1 " +
-                "JOIN insurance_wallet.transaction t2 " +
-                "ON t1.transaction_id = t2.transaction_id " +
-                "WHERE t1.account_id = ? AND t1.transaction_type = 'debit' AND t2.transaction_type = 'credit'";
+        String walletAccountId = "gp_gb_wallet_" + gpId;
 
-        List<Map<String, Object>> transactions = jdbcTemplate.queryForList(query, "merchant_gromo_gromo-insure_4w_bank_11999051");
+        String query = "SELECT transaction_id, account_id, transaction_type, transaction_amount, " +
+                "merchant_transaction_id, status, created_date " +
+                "FROM insurance_wallet.transaction " +
+                "WHERE account_id IN (?, ?)";
 
-        int totalBalance = 0;
-        boolean matchFound = false;
+        List<Map<String, Object>> transactions = jdbcTemplate.queryForList(query, walletAccountId, merchantAccountId);
+
+        List<Map<String, Object>> walletCredits = new ArrayList<>();
+        List<Map<String, Object>> walletDebits = new ArrayList<>();
+        List<Map<String, Object>> merchantCredits = new ArrayList<>();
+        List<Map<String, Object>> merchantDebits = new ArrayList<>();
 
         for (Map<String, Object> tx : transactions) {
-            String creditedAccount = (String) tx.get("credited_account");
-            int amount = ((Number) tx.get("transaction_amount")).intValue();
-            totalBalance += amount;
+            String accId = (String) tx.get("account_id");
+            String type = (String) tx.get("transaction_type");
 
-            if (creditedAccount.equals(expectedGpGbWalletId) && amount == expectedPayoutAmount) {
-                matchFound = true;
+            if (accId.equals(walletAccountId)) {
+                if ("credit".equalsIgnoreCase(type)) walletCredits.add(tx);
+                else if ("debit".equalsIgnoreCase(type)) walletDebits.add(tx);
+            } else if (accId.equals(merchantAccountId)) {
+                if ("credit".equalsIgnoreCase(type)) merchantCredits.add(tx);
+                else if ("debit".equalsIgnoreCase(type)) merchantDebits.add(tx);
             }
         }
 
-        if (!matchFound) {
-            throw new IllegalStateException("❌ No matching transaction found for wallet " + expectedGpGbWalletId);
+        // --- Print GP/GB Wallet Transactions ---
+        System.out.println("🟦 -- GP/GB Wallet Transactions --");
+        walletCredits.forEach(this::prettyPrintTransaction);
+        walletDebits.forEach(this::prettyPrintTransaction);
+
+        // --- Print Merchant Transactions ---
+        System.out.println("🟥 -- Merchant Transactions --");
+        merchantCredits.forEach(this::prettyPrintTransaction);
+        merchantDebits.forEach(this::prettyPrintTransaction);
+
+        // --- Matched Transactions by merchant_transaction_id ---
+        System.out.println("✅ -- Matched Transactions (Wallet Credit ↔ Merchant Debit) --");
+
+        boolean matchedAmountFound = false;
+
+        for (Map<String, Object> walletTx : walletCredits) {
+            String merchantTxnId = (String) walletTx.get("merchant_transaction_id");
+
+            for (Map<String, Object> merchantTx : merchantDebits) {
+                if (merchantTxnId != null && merchantTxnId.equals(merchantTx.get("merchant_transaction_id"))) {
+                    System.out.println("------ Matched Pair ------");
+                    printEssentialFields("Wallet Credit", walletTx);
+                    printEssentialFields("Merchant Debit", merchantTx);
+
+                    int amount = ((Number) walletTx.get("transaction_amount")).intValue();
+                    if (amount == expectedPayoutAmount) {
+                        matchedAmountFound = true;
+                    }
+                }
+            }
         }
 
-        System.out.println("✅ Transactions validated for wallet: " + expectedGpGbWalletId);
-        return totalBalance;
+        if (!matchedAmountFound) {
+            throw new IllegalStateException("❌ No matching transaction found with amount: " + expectedPayoutAmount);
+        }
+
+        int totalCredited = walletCredits.stream()
+                .mapToInt(tx -> ((Number) tx.get("transaction_amount")).intValue())
+                .sum();
+
+        System.out.println("✅ Total credited to wallet: ₹" + totalCredited);
+        return totalCredited;
     }
+
+
+
 
     public void callBalanceAPI(String gpId) {
         if (gpId == null || gpId.isEmpty()) {

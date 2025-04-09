@@ -20,8 +20,8 @@ public class DowngradeWithPreviousMonths {
     private String stagingDbUser;
     private String stagingDbPass;
 
-    private static final String gpuid = "ZMJU3829";
-    private static final int monthsBefore = 1; // Change this to 1 or 2 based on requirement
+    private static final String gpuid = "MBDQ4734";
+    private static final int monthsBefore = 2; // Change this to 1 or 2 based on requirement
 
     public static void main(String[] args) {
         try {

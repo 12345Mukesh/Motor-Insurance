@@ -15,9 +15,9 @@ public class CreateLead {
     private static final String LEAD_UPDATE_URL = "https://api-stg.gromo.in/api/v2/miscellaneousLeadUpdated";
     private static final String productTypeId = "344";
     private static final String productTypeName = "Swiggy HDFC Bank Credit Card";
-    private static final int kpi1Payin = 300;
-    private static final int kpi1Payout = 200;
-    private static String gpuid = "N6RO6840";
+    private static final int kpi1Payin = 8000;
+    private static final int kpi1Payout = 5020;
+    private static String gpuid = "EELW0180";
     private String leadId;
 
     public ResponseEntity<String> createLead() {
