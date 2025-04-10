@@ -6,5 +6,12 @@
   "submit": "submit",
   "get": "get-by-idempotency-key/",
   "cancel": "cancel",
-  "saleThreshold" : 5000
+  "tiers": {
+    "silver": 0,
+    "gold": 3000,
+    "platinum": 7500,
+    "elite": 15000
+  },
+  "saleThreshold": 3000
+
 }

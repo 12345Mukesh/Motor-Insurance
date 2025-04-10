@@ -8,16 +8,15 @@ import java.time.LocalDate;
 import java.util.Random;
 
 
-
 public class CreateLead {
     private final RestTemplate restTemplate = new RestTemplate();
     private static final String LEAD_URL = "https://api-stg.gromo.in/api/v2/miscellaneousLeads?allowSelfLead=false";
     private static final String LEAD_UPDATE_URL = "https://api-stg.gromo.in/api/v2/miscellaneousLeadUpdated";
     private static final String productTypeId = "344";
     private static final String productTypeName = "Swiggy HDFC Bank Credit Card";
-    private static final int kpi1Payin = 8000;
-    private static final int kpi1Payout = 5020;
-    private static String gpuid = "EELW0180";
+    private static final int kpi1Payin = 1900;
+    private static final int kpi1Payout = 1800;
+    private static String gpuid = "5W082345";
     private String leadId;
 
     public ResponseEntity<String> createLead() {
