@@ -9,6 +9,7 @@ import org.springframework.web.client.RestTemplate;
 
 import javax.sql.DataSource;
 import java.io.InputStream;
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -19,11 +20,14 @@ public class ProcessWorkflow {
     private static String baseUrl;
     private static String processApiUrl;
     private static JsonNode jsonConfig;
+    private BigDecimal matchedTransactionAmount;
 
-    private static String gpuId = "40913"; // hardcoded gpId
-    private static final boolean USE_RANDOM_GP_ID = false; // toggle to true to use new gpId
+    private String matchedTransactionId;
 
-   public static String merchantAccountId = "merchant_gromo_gromo-insure_4w_bank_11999033";
+    private static String gpuId = "40913";
+    private static final boolean USE_RANDOM_GP_ID = true;
+
+    public static String merchantAccountId = "merchant_gromo_gromo-insure_cancel_bank_xxzbp30a5rdpz";
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -47,6 +51,7 @@ public class ProcessWorkflow {
 
         processWorkflow.triggerProcessAPI(gpId);
         processWorkflow.callBalanceAPI(gpId);
+        processWorkflow.triggerCancelWorkflow();
     }
 
     private static void loadJsonConfig() throws Exception {
@@ -131,12 +136,10 @@ public class ProcessWorkflow {
             throw new IllegalStateException("❌ Error: Expected at least 3 accounts for gpId " + gpId + ", but found only " + accountRecords.size());
         }
 
-        System.out.println("✅ Accounts found for gpId " + gpId + ":");
         for (Map<String, Object> record : accountRecords) {
             String accountId = (String) record.get("account_id");
-            Number accountTypeIdNumber = (Number) record.get("account_type_id");
-
-            int accountTypeId = (accountTypeIdNumber != null) ? accountTypeIdNumber.intValue() : -1;
+            String accountTypeIdStr = record.get("account_type_id").toString();
+            int accountTypeId = Integer.parseInt(accountTypeIdStr);
 
             if (accountId.startsWith("gp_gb_wallet") && accountTypeId == 1) {
                 globalGpGbWallet = accountId;
@@ -156,7 +159,7 @@ public class ProcessWorkflow {
         }
 
         String eventType = jsonConfig.get("eventType").asText();
-        int payoutAmount = jsonConfig.get("payoutAmount").asInt();
+        BigDecimal payoutAmount = new BigDecimal(jsonConfig.get("payoutAmount").asText());
         String transactionDate = jsonConfig.get("transactionDate").asText();
         String freelookDate = jsonConfig.get("freelookDate").asText();
         String paymentDoneDate = jsonConfig.get("paymentDoneDate").asText();
@@ -176,7 +179,7 @@ public class ProcessWorkflow {
         Map<String, Object> eventDetails = new HashMap<>();
         eventDetails.put("leadId", lead);
         eventDetails.put("payoutAmount", payoutAmount);
-        eventDetails.put("gpId", globalGpGbWallet);
+        eventDetails.put("gpId", gpId);
         eventDetails.put("freelookDate", freelookDate);
         eventDetails.put("insurer", insurer);
         eventDetails.put("category", category);
@@ -197,7 +200,6 @@ public class ProcessWorkflow {
         ResponseEntity<String> response = restTemplate.exchange(processApiUrl, HttpMethod.POST, requestEntity, String.class);
         System.out.println("📝 Process API Response: " + response.getBody());
 
-        // 🔍 Debug block: Check if transactions are present before validation
         System.out.println("🔍 Checking raw transactions for account: gp_gb_wallet_" + gpId);
         String checkQuery = "SELECT * FROM insurance_wallet.transaction WHERE account_id = ?";
         List<Map<String, Object>> debugTransactions = jdbcTemplate.queryForList(checkQuery, "gp_gb_wallet_" + gpId);
@@ -209,9 +211,9 @@ public class ProcessWorkflow {
             debugTransactions.forEach(System.out::println);
         }
 
-        // Proceed with validations
-//        int totalTransactionBalance = validateTransactions(gpId, payoutAmount);
-        validateTransactions(gpId, payoutAmount);
+        // ✅ Validate once and store matched data
+        matchedTransactionId = validateTransactions(gpId, payoutAmount);
+        matchedTransactionAmount = payoutAmount;
     }
 
     private void prettyPrintTransaction(Map<String, Object> tx) {
@@ -229,11 +231,25 @@ public class ProcessWorkflow {
         System.out.println("Created Date  : " + tx.get("created_date"));
     }
 
-    public int validateTransactions(String gpId, int expectedPayoutAmount) {
+    public String validateTransactions(String gpId, BigDecimal expectedPayoutAmount) {
         String walletAccountId = "gp_gb_wallet_" + gpId;
+        System.out.println("wallet Account Id: " + walletAccountId);
+
+        System.out.println("📢 Confirming if Process API created wallet transactions...");
+        List<Map<String, Object>> debugTransactions = jdbcTemplate.queryForList(
+                "SELECT * FROM insurance_wallet.transaction WHERE account_id = ?",
+                "gp_gb_wallet_" + gpId
+        );
+
+        if (debugTransactions.isEmpty()) {
+            System.out.println("❌ No wallet transactions found for gpId: " + gpId);
+        } else {
+            System.out.println("✅ Found wallet transactions:");
+            debugTransactions.forEach(System.out::println);
+        }
 
         String query = "SELECT transaction_id, account_id, transaction_type, transaction_amount, " +
-                "merchant_transaction_id, status, created_date " +
+                "event_id, status, created_date " +
                 "FROM insurance_wallet.transaction " +
                 "WHERE account_id IN (?, ?)";
 
@@ -257,39 +273,50 @@ public class ProcessWorkflow {
             }
         }
 
-        // --- Print GP/GB Wallet Transactions ---
         System.out.println("🟦 -- GP/GB Wallet Transactions --");
         walletCredits.forEach(this::prettyPrintTransaction);
         walletDebits.forEach(this::prettyPrintTransaction);
 
-        // --- Print Merchant Transactions ---
         System.out.println("🟥 -- Merchant Transactions --");
         merchantCredits.forEach(this::prettyPrintTransaction);
         merchantDebits.forEach(this::prettyPrintTransaction);
 
-        // --- Matched Transactions by merchant_transaction_id ---
         System.out.println("✅ -- Matched Transactions (Wallet Credit ↔ Merchant Debit) --");
 
         boolean matchedAmountFound = false;
 
         for (Map<String, Object> walletTx : walletCredits) {
-            String merchantTxnId = (String) walletTx.get("merchant_transaction_id");
+            String walletEventId = (String) walletTx.get("event_id");
 
             for (Map<String, Object> merchantTx : merchantDebits) {
-                if (merchantTxnId != null && merchantTxnId.equals(merchantTx.get("merchant_transaction_id"))) {
+                String merchantEventId = (String) merchantTx.get("event_id");
+
+                boolean matchedByEventId = walletEventId != null && walletEventId.equals(merchantEventId);
+
+                BigDecimal walletAmount = new BigDecimal(walletTx.get("transaction_amount").toString());
+                BigDecimal merchantAmount = new BigDecimal(merchantTx.get("transaction_amount").toString());
+
+                String walletTime = walletTx.get("created_date").toString();
+                String merchantTime = merchantTx.get("created_date").toString();
+
+                boolean matchedByAmountAndTime = walletAmount.equals(merchantAmount) && walletTime.equals(merchantTime);
+
+                if (matchedByEventId || matchedByAmountAndTime) {
                     System.out.println("------ Matched Pair ------");
                     printEssentialFields("Wallet Credit", walletTx);
                     printEssentialFields("Merchant Debit", merchantTx);
 
-                    int amount = ((Number) walletTx.get("transaction_amount")).intValue();
-                    if (amount == expectedPayoutAmount) {
+                    if (walletAmount.compareTo(expectedPayoutAmount) == 0) {
                         matchedAmountFound = true;
+                        matchedTransactionId = (String) walletTx.get("transaction_id");
+                        matchedTransactionAmount = walletAmount;
                     }
                 }
+
             }
         }
 
-        if (!matchedAmountFound) {
+        if (!matchedAmountFound || matchedTransactionId == null) {
             throw new IllegalStateException("❌ No matching transaction found with amount: " + expectedPayoutAmount);
         }
 
@@ -298,9 +325,12 @@ public class ProcessWorkflow {
                 .sum();
 
         System.out.println("✅ Total credited to wallet: ₹" + totalCredited);
-        return totalCredited;
-    }
+        System.out.println("🎯 Matched Transaction ID: " + matchedTransactionId);
+        System.out.println("💸 Matched Transaction Amount: ₹" + matchedTransactionAmount);
 
+        return matchedTransactionId;
+
+    }
 
 
 
@@ -323,4 +353,41 @@ public class ProcessWorkflow {
         System.out.println("📦 Balance API Response for gpId " + gpId + ":");
         System.out.println(response.getBody());
     }
+
+    public void triggerCancelWorkflow() {
+        String gpId = USE_RANDOM_GP_ID ? generateRandomGpId() : gpuId;
+
+        if (matchedTransactionAmount == null || matchedTransactionId == null) {
+            throw new IllegalStateException("❌ No matched transaction data found. Run triggerProcessAPI() first.");
+        }
+
+        Map<String, Object> eventDetails = new LinkedHashMap<>();
+        eventDetails.put("gpId", gpId);
+        eventDetails.put("originalTransactionId", matchedTransactionId);
+        eventDetails.put("cancellationType", "USER_INITIATED");
+
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("eventName", "cancel2w");
+        requestBody.put("eventDetails", eventDetails);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+        RestTemplate restTemplate = new RestTemplate();
+
+        ResponseEntity<String> response = restTemplate.exchange(processApiUrl, HttpMethod.POST, entity, String.class);
+
+        System.out.println("📤 Cancellation API called for gpId: " + gpId);
+        System.out.println("🔁 Original Transaction ID: " + matchedTransactionId);
+        System.out.println("💰 Matched Amount Used: ₹" + matchedTransactionAmount);
+        System.out.println("📨 API Response:");
+        System.out.println(response.getBody());
+    }
+
 }
+
+
+
+
+
