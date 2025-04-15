@@ -23,7 +23,7 @@ public class SignUpWithReferralSingleUser {
     public String gpuid;
     private String accessToken;
     private String password;
-    private String referrer = "6ZAW4781";
+    private String referrer = "RFUM3191";
     private final String gaid = "6ce84844-e74d-4d26-be29-db515aa9f4b5"; // Ensure gaid is initialized
 
 
@@ -133,19 +133,29 @@ public class SignUpWithReferralSingleUser {
 
         String requestBody = "{ \"user\": { " +
                 "\"firstName\": \"" + firstName + "\", " +
-                "\"lastName\": \"Test\", " +
+                "\"lastName\": \"singh\", " +
                 "\"annualIncome\": \"5–10L\", " +
                 "\"communicationAddress\": { " +
-                "\"city\": \"Gurgaon\", \"pincode\": 122003, \"state\": \"HARYANA\" }, " +
+                "\"city\": \"Gurgaon\", " +
+                "\"pincode\": 122003, " +
+                "\"state\": \"HARYANA\" " +
+                "}, " +
                 "\"dateOfBirth\": \"1999-01-16\", " +
                 "\"email\": \"abcd@gmail.com\", " +
                 "\"gpuid\": \"" + gpuid + "\", " +
                 "\"isGp\": true, " +
                 "\"language\": \"en\", " +
+                "\"professionalDetails\": { " +
+                "\"profession\": \"Financial Advisor/ CA\", " +
+                "\"fromLocal\": false, " +
+                "\"success\": false " +
+                "}, " +
                 "\"qualification\": \"Graduate\", " +
                 "\"refferedBy\": \"" + referrer + "\", " +
                 "\"whatsAppConsent\": true " +
-                "}, \"fromLocal\": false, \"success\": false }";
+                "}, " +
+                "\"fromLocal\": false, " +
+                "\"success\": false }";
 
         HttpEntity<String> requestEntity = new HttpEntity<>(requestBody, headers);
 

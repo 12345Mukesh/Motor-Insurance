@@ -22,12 +22,13 @@ public class ProcessWorkflow {
     private static JsonNode jsonConfig;
     private BigDecimal matchedTransactionAmount;
 
-    private String matchedTransactionId;
+    private static String matchedTransactionId;
 
     private static String gpuId = "40913";
+    private static String lead;
     private static final boolean USE_RANDOM_GP_ID = true;
 
-    public static String merchantAccountId = "merchant_gromo_gromo-insure_cancel_bank_xxzbp30a5rdpz";
+    public static String merchantAccountId = "merchant_gromo_gromo-insure_cancel_bank_bfrsnx4apv529";
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -51,7 +52,12 @@ public class ProcessWorkflow {
 
         processWorkflow.triggerProcessAPI(gpId);
         processWorkflow.callBalanceAPI(gpId);
-        processWorkflow.triggerCancelWorkflow();
+        processWorkflow.triggerReversalAPI();
+        processWorkflow.callBalanceAPI(gpId);
+//        processWorkflow.triggerPaymentAddition();
+//        processWorkflow.callBalanceAPI(gpId);
+//        processWorkflow.triggerCancelWorkflow();
+//        processWorkflow.callBalanceAPI(gpId);
     }
 
     private static void loadJsonConfig() throws Exception {
@@ -167,7 +173,7 @@ public class ProcessWorkflow {
         String insurer = jsonConfig.get("insurer").asText();
         String category = jsonConfig.get("category").asText();
 
-        String lead = leadId + generateRandomGpId();
+         lead = leadId + generateRandomGpId();
 
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("eventType", eventType);
@@ -189,6 +195,7 @@ public class ProcessWorkflow {
         payload.put("eventDetails", eventDetails);
         requestBody.put("payload", payload);
 
+        System.out.println("generated lead Id: " + lead);
         System.out.println("🚀 Triggering Process API with payload: " + requestBody);
 
         HttpHeaders headers = new HttpHeaders();
@@ -251,7 +258,7 @@ public class ProcessWorkflow {
         String query = "SELECT transaction_id, account_id, transaction_type, transaction_amount, " +
                 "event_id, status, created_date " +
                 "FROM insurance_wallet.transaction " +
-                "WHERE account_id IN (?, ?)";
+                "WHERE account_id IN (?, ?) order by id desc limit 5";
 
         List<Map<String, Object>> transactions = jdbcTemplate.queryForList(query, walletAccountId, merchantAccountId);
 
@@ -355,20 +362,20 @@ public class ProcessWorkflow {
     }
 
     public void triggerCancelWorkflow() {
-        String gpId = USE_RANDOM_GP_ID ? generateRandomGpId() : gpuId;
+        String eventType = "cancel4w"; // or "cancel2w" based on flow
 
-        if (matchedTransactionAmount == null || matchedTransactionId == null) {
-            throw new IllegalStateException("❌ No matched transaction data found. Run triggerProcessAPI() first.");
-        }
 
         Map<String, Object> eventDetails = new LinkedHashMap<>();
-        eventDetails.put("gpId", gpId);
-        eventDetails.put("originalTransactionId", matchedTransactionId);
+        eventDetails.put("eventId", lead);
         eventDetails.put("cancellationType", "USER_INITIATED");
 
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("eventName", eventType);
+        payload.put("eventDetails", eventDetails);
+
         Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("eventName", "cancel2w");
-        requestBody.put("eventDetails", eventDetails);
+        requestBody.put("eventType", eventType);
+        requestBody.put("payload", payload);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -376,14 +383,82 @@ public class ProcessWorkflow {
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
         RestTemplate restTemplate = new RestTemplate();
 
-        ResponseEntity<String> response = restTemplate.exchange(processApiUrl, HttpMethod.POST, entity, String.class);
+        ResponseEntity<String> response = restTemplate.exchange(
+                processApiUrl, HttpMethod.POST, entity, String.class
+        );
 
-        System.out.println("📤 Cancellation API called for gpId: " + gpId);
-        System.out.println("🔁 Original Transaction ID: " + matchedTransactionId);
-        System.out.println("💰 Matched Amount Used: ₹" + matchedTransactionAmount);
+        System.out.println("📤 Cancellation API called with eventId: " + lead);
         System.out.println("📨 API Response:");
         System.out.println(response.getBody());
     }
+
+    public void triggerPaymentAddition() {
+        String originalTransactionId = matchedTransactionId;
+
+        int additionAmount = jsonConfig.get("additionAmount").asInt();
+        String additionReason = "Customer compensation for underpayment";
+        String eventType = "Payment_Addition";
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("originalTransactionId", originalTransactionId);
+        payload.put("additionReason", additionReason);
+        payload.put("additionAmount", additionAmount);
+
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("eventType", eventType);
+        requestBody.put("payload", payload);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+        RestTemplate restTemplate = new RestTemplate();
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                processApiUrl, HttpMethod.POST, entity, String.class
+        );
+
+        System.out.println("📤 Payment Addition API called.");
+        System.out.println("🧾 Transaction ID: " + originalTransactionId);
+        System.out.println("💸 Addition Amount: ₹" + additionAmount);
+        System.out.println("📝 Reason: " + additionReason);
+        System.out.println("📨 API Response:");
+        System.out.println(response.getBody());
+    }
+    public void triggerReversalAPI() {
+        String originalTransactionId =  matchedTransactionId;
+
+        int reversalAmount = jsonConfig.get("reversalAmount").asInt();
+        String reversalReason = "Customer dispute resolution - underpayment";
+
+
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("originalTransactionId", originalTransactionId);
+        requestBody.put("reversalReason", reversalReason);
+        requestBody.put("reversalAmount", reversalAmount);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+        RestTemplate restTemplate = new RestTemplate();
+
+       String reversalApiUrl = jsonConfig.get("reversalApiUrl").asText();
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                reversalApiUrl, HttpMethod.POST, entity, String.class
+        );
+
+        System.out.println("📤 Reversal API called.");
+        System.out.println("🧾 Transaction ID: " + originalTransactionId);
+        System.out.println("💸 Reversal Amount: ₹" + reversalAmount);
+        System.out.println("📝 Reason: " + reversalReason);
+        System.out.println("📨 API Response:");
+        System.out.println(response.getBody());
+    }
+
+
+
 
 }
 

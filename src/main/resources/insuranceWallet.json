@@ -1,6 +1,7 @@
 {
   "API_URL": "http://localhost:3000/api/v1/insurance-wallet/",
   "merchant": "workflow/merchant/onboard",
+  "reversalApiUrl": "workflow/reversal",
   "domain": "gromo",
   "name": "gromo-insure",
   "category": "general",
@@ -17,6 +18,8 @@
   "transactionDate": "2023-03-06T10:15:30.000Z",
   "leadId": "12",
   "payoutAmount": "200",
+  "additionAmount": 100,
+  "reversalAmount": 50,
   "freelookDate": "2025-04-20",
   "insurer": "Tata",
   "category": "4w",

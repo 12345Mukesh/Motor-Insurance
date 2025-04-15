@@ -9,7 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Random;
 
-@Service
+
 public class SignUpWithoutReferralSingleUser {
     private final RestTemplate restTemplate = new RestTemplate();
     private static final String SIGNUP_URL = "https://auth-stg.gromo.in/oauth/otp";

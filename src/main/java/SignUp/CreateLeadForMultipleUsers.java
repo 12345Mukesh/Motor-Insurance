@@ -130,17 +130,18 @@ public class CreateLeadForMultipleUsers {
             // Call API to create lead using gpuid
         }
     }
-
+  //String[] gpuidList = {"FU0C7617", "IQLM6806", "387P8699", "NL156915", "PXU32998", "425J1195", "WDZR9759", "Q9RB9069", "FLZT0871", "PAYO8151"};
     public static void main(String[] args) {
-        String[] gpuidList = { "76VF7719", "2IH10333", "58VE8875"};
-        int[] kpi1Payouts =  {  100,2000,           5000,  };
-        String[] productTypeIds = {"344", "400", "269"};
-        String[] productTypeNames = {"Swiggy HDFC Bank Credit Card", "BlinkX", "KreditBee"};
-        int[] kpi1Payins = {5500, 36000, 100500};
+        String[] gpuidList = {"FU0C7617", "IQLM6806", "387P8699", "NL156915", "PXU32998"};
+
+        int[] kpi1Payouts =  {  0,150,0 ,250,250  };
+        String[] productTypeIds = {"344", "400", "269","344","400"};
+        String[] productTypeNames = {"Swiggy HDFC Bank Credit Card", "BlinkX", "KreditBee","Swiggy HDFC Bank Credit Card","BlinkX"};
+        int[] kpi1Payins = {5500, 36000, 100500,5500,5000};
 
 
 
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 6; i++) {
             CreateLeadForMultipleUsers leadService = new CreateLeadForMultipleUsers();
 
             System.out.println("\nCreating lead for User " + (i + 1) + " with GPUID: " + gpuidList[i]);

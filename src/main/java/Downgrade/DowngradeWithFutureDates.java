@@ -9,16 +9,19 @@ import org.springframework.web.client.RestTemplate;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.*;
-import java.time.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.temporal.TemporalAdjusters;
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Properties;
 import java.util.stream.IntStream;
 
-public class DowngradeWithTierId {
-
+public class DowngradeWithFutureDates {
     //without addition of gc and adding tierId
-     // 8C6W2346
+    // 8C6W2346
     private static final String GPU_ID = "1SQN3009";
     private static final String IDP_KEY_PREFIX = "gab_downgrade_";
 
@@ -30,7 +33,7 @@ public class DowngradeWithTierId {
 
     public static void main(String[] args) {
         try {
-            new DowngradeWithTierId().run();
+            new DowngradeWithFutureDates().run();
         } catch (Exception e) {
             System.err.println("\u274C Unhandled Error in main:");
             e.printStackTrace();
@@ -57,9 +60,9 @@ public class DowngradeWithTierId {
             return;
         }
 
-        // Map tierId to actual tier names as per business logic
+        // Map tierId to actual tier keys from config
         Map<Integer, String> tierIdToTierKey = new HashMap<>();
-        tierIdToTierKey.put(1, "gold");     // Tier 1 (Silver) → treat as Gold
+        tierIdToTierKey.put(1, "gold");     // Tier 1 (Silver) → Gold
         tierIdToTierKey.put(2, "gold");     // Tier 2 (Gold)
         tierIdToTierKey.put(3, "platinum"); // Tier 3
         tierIdToTierKey.put(4, "elite");    // Tier 4
@@ -92,6 +95,7 @@ public class DowngradeWithTierId {
         System.out.println("🔔 Initial Trigger Date: " + triggerDate);
 
         callSubmitAPI(); // Initial submit
+
         // Check from next month onward (excluding join month)
         for (int offset = 0; offset < 2; offset++) {
             LocalDate month1 = evaluationStartMonth.plusMonths(offset);
@@ -103,34 +107,35 @@ public class DowngradeWithTierId {
             double totalAmount = queryWalletTotal(month1, windowEnd);
             System.out.println("💰 Total Wallet Transactions: ₹" + totalAmount);
 
-            System.out.println("📋 Transactions for: " + month1.getMonth());
-            printTransactionDetails(month1, month1.with(TemporalAdjusters.lastDayOfMonth()));
-
-            if (!month2.isAfter(today)) {
+            // Show monthly transaction details (only if not in the future)
+            if (!month1.isAfter(today)) {
+                System.out.println("📋 Transactions for: " + month1.getMonth());
+                printTransactionDetails(month1, month1.with(TemporalAdjusters.lastDayOfMonth()));
+            }
+            if (!month2.isAfter(today.plusMonths(1))) {
                 System.out.println("📋 Transactions for: " + month2.getMonth());
                 printTransactionDetails(month2, month2.with(TemporalAdjusters.lastDayOfMonth()));
             }
-
-            if (!month3.isAfter(today)) {
+            if (!month3.isAfter(today.plusMonths(2))) {
                 System.out.println("📋 Transactions for: " + month3.getMonth());
                 printTransactionDetails(month3, month3.with(TemporalAdjusters.lastDayOfMonth()));
             }
 
             if (totalAmount >= threshold) {
-                triggerDate = triggerDate.plusMonths(1);
+                triggerDate = triggerDate.plusMonths(1); // bump to 4th month from join
                 System.out.println("🚀 Threshold met. Updating trigger date to: " + triggerDate);
                 callCancelAPI();
                 callSubmitAPI();
+                break;
             } else {
-                System.out.println("📉 Threshold not met");
+                System.out.println("📉 Threshold not met for offset: " + offset);
             }
-
-//            windowStart = windowStart.plusMonths(1);
         }
 
         System.out.println("\n🔔 Final Trigger Date: " + triggerDate);
         callGetAPI();
     }
+
 
 
 
@@ -146,7 +151,7 @@ public class DowngradeWithTierId {
                     LocalDateTime downgradeDate = downgradeDateTs != null ? downgradeDateTs.toLocalDateTime() : null;
                     if (downgradeDate != null) {
                         System.out.printf("📌 Current user is in Tier %d as of today (%s)%n", tierId, LocalDate.now());
-                             } else {
+                    } else {
                         System.out.println("⚠️ No downgrade date available for user.");
                     }
                     return tierId;
