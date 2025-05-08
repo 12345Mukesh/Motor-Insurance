@@ -14,9 +14,9 @@ public class CreateLead {
     private static final String LEAD_UPDATE_URL = "https://api-stg.gromo.in/api/v2/miscellaneousLeadUpdated";
     private static final String productTypeId = "344";
     private static final String productTypeName = "Swiggy HDFC Bank Credit Card";
-    private static final int kpi1Payin = 5400;
-    private static final int kpi1Payout = 5000;
-    private static String gpuid = "UGYV5868";
+    private static final int kpi1Payin = 125400;
+    private static final int kpi1Payout = 300;
+    private static String gpuid = "S6A98589";
     private String leadId;
 
     public ResponseEntity<String> createLead() {
@@ -69,7 +69,7 @@ public class CreateLead {
         }
 
         String todayDate = LocalDate.now().toString();
-//        String todayDate = "2025-05-09";
+//        String todayDate = "2025-02-15";
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);

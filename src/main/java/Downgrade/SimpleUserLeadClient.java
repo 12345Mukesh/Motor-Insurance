@@ -36,10 +36,13 @@ public class SimpleUserLeadClient {
     private String username;
     private String password;
     private String leadId;
-    private String payin = "4600";
-    private String payout = "3600";
-   private static  String today = LocalDate.now().toString();
-//  private static  String today = "2025-06-25";
+    private String payin = "8000";
+    private String payout = "7500";
+
+//    private static  String today = "2025-04-15";
+//   private static  String today = LocalDate.now().toString();
+
+ private static  String today = "2025-07-25";
 
     public static void main(String[] args) {
         try {
@@ -48,7 +51,7 @@ public class SimpleUserLeadClient {
             SimpleUserLeadClient service = new SimpleUserLeadClient();
 
             // Set this to hardcoded value if needed, otherwise keep null to trigger full flow
-            String hardcodedGpuid = "46QS3229" ; // Example: "STATIC12345";
+            String hardcodedGpuid = "CZFR4478" ; // Example: "STATIC12345";
 
             if (hardcodedGpuid != null && !hardcodedGpuid.isEmpty()) {
                 // ========== HARD-CODED GPU ID FLOW ==========
@@ -62,7 +65,10 @@ public class SimpleUserLeadClient {
                 System.out.println("Downgrade date for the gpuid...... " + service.gpuid);
 
                 service.loadDbConfig();
+                Thread.sleep(5000);
                 service.printUpcomingDowngradeInfo();
+                Thread.sleep(5000);
+                service.printMementoSchedule();
 
             } else {
                 // ========== FULL DYNAMIC FLOW ==========
@@ -413,8 +419,10 @@ public class SimpleUserLeadClient {
                     int shouldDowngrade = dataNode.path("shouldDowngrade").asInt();
                     String downgradeDateStr = dataNode.path("downgradeDate").asText(null);
                     LocalDateTime downgradeDate = downgradeDateStr != null ? LocalDateTime.parse(downgradeDateStr) : null;
+                    String startonTime = dataNode.path("startOn").asText();
 
                     System.out.println("📋 Memento Schedule Info:");
+                    System.out.println("🧾 Raw DB Row Data:");
                     System.out.println("🔹 Definition Name  : " + definitionName);
                     System.out.println("🔹 Destination URL  : " + destinationURL);
                     System.out.println("🔹 Start On         : " + startOn);

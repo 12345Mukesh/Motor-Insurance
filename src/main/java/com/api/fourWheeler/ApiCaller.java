@@ -41,13 +41,22 @@ public class ApiCaller {
         }
     }
 
+    // 🔹 Step 4: Read Config Values from `config.json`
+    public static String getConfigValue(String key) throws IOException {
+        ObjectMapper objectMapper = new ObjectMapper();
+        Map<String, Object> config = objectMapper.readValue(new File(CONFIG_FILE), Map.class);
+
+        Object value = config.get(key);
+        return value != null ? value.toString() : null;
+    }
+
+
     // 🔹 Step 1: Request OTP API
     public static String requestOtp() throws IOException {
         String url = getConfigValue("baseUrl") + getConfigValue("sendOtpEndpoint");
 
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("phone", getConfigValue("phone"));
-
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
 
@@ -110,12 +119,6 @@ public class ApiCaller {
         }
     }
 
-    // 🔹 Step 4: Read Config Values from `config.json`
-    public static String getConfigValue(String key) throws IOException {
-        ObjectMapper objectMapper = new ObjectMapper();
-        Map<String, Object> config = objectMapper.readValue(new File(CONFIG_FILE), Map.class);
 
-        Object value = config.get(key);
-        return value != null ? value.toString() : null;
-    }
+
 }
